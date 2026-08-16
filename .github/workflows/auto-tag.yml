@@ -27,6 +27,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # MUST be a PAT, not the default GITHUB_TOKEN.
+          #
+          # GitHub deliberately does not start a workflow run from an event
+          # created with GITHUB_TOKEN — it is loop prevention. A tag pushed with
+          # it is created perfectly and then triggers NOTHING, so publish.yml
+          # never fires and the release silently stops halfway.
+          #
+          # This is not theoretical: misarmail-sdks and misarblog-sdks are wired
+          # this way, and neither has ever run a publish workflow. Their Go
+          # modules resolve only because proxy.golang.org serves straight from
+          # the git tag without CI.
+          #
+          # Verified both ways on this repo: the same tag pushed by GITHUB_TOKEN
+          # started no run; pushed by a user token it started publish.yml
+          # immediately.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+
+      - name: Warn if tags cannot trigger a publish
+        if: ${{ !secrets.RELEASE_TOKEN }}
+        run: |
+          echo "::warning::RELEASE_TOKEN is not set. Tags will be created with GITHUB_TOKEN, which cannot trigger publish.yml — you will have to run it manually per SDK. See the comment in this file."
 
       - name: Tag every SDK whose version changed
         run: |
