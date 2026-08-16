@@ -145,6 +145,23 @@ jobs:
                 git tag "$TAG"
                 git push origin "$TAG"
               done
+
+              # Swift PM additionally needs a BARE semver tag. It reads versions
+              # from the repository root and does not recognise a prefixed tag as
+              # a version at all — `swift/v1.0.0` resolves to "no versions match".
+              # Verified against a real consumer package: with only the prefixed
+              # tag, resolution fails; with `v1.0.0` present it resolves to 1.0.0.
+              #
+              # Safe alongside Go, which needs the OPPOSITE convention: its module
+              # lives in go/ so it is versioned by `go/vX.Y.Z`, and there is no
+              # go.mod at the repository root for a bare tag to collide with.
+              if git rev-parse -q --verify "refs/tags/v$FLEET" >/dev/null; then
+                echo "! v$FLEET already exists"
+              else
+                echo "+ v$FLEET (bare tag — the only form Swift PM accepts)"
+                git tag "v$FLEET"
+                git push origin "v$FLEET"
+              fi
             fi
           fi
 

@@ -22,7 +22,7 @@ name: Publish SDK
 
 on:
   push:
-    tags: ['*/v*']
+    tags: ['*/v*', 'v*']   # bare v* is the Swift PM release tag
   workflow_dispatch:
     inputs:
       sdk:
@@ -58,11 +58,16 @@ jobs:
             SDK="${{ inputs.sdk }}"; VERSION="${{ inputs.version }}"
           else
             REF="${GITHUB_REF#refs/tags/}"
-            if [[ ! "$REF" =~ ^([a-z]+)/v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
-              echo "::error::Tag '$REF' does not match <language>/vX.Y.Z"
+            if [[ "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+              # A bare semver tag is the Swift release: Swift PM reads versions
+              # from the repository root and does not accept a prefixed tag.
+              SDK="swift"; VERSION="${BASH_REMATCH[1]}"
+            elif [[ "$REF" =~ ^([a-z]+)/v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+              SDK="${BASH_REMATCH[1]}"; VERSION="${BASH_REMATCH[2]}"
+            else
+              echo "::error::Tag '$REF' matches neither <language>/vX.Y.Z nor vX.Y.Z"
               exit 1
             fi
-            SDK="${BASH_REMATCH[1]}"; VERSION="${BASH_REMATCH[2]}"
           fi
 
           KNOWN="typescript python rust ruby dart flutter java kotlin csharp go swift php"
