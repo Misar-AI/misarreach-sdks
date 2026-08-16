@@ -1,0 +1,274 @@
+name: Publish SDK
+
+# Fires on a per-SDK release tag: `<language>/vX.Y.Z`, e.g. `python/v1.0.0`.
+# auto-tag.yml creates these from a manifest version bump; you can also push one
+# by hand.
+#
+# Per-SDK tags rather than one fleet-wide version, so a Ruby fix does not burn a
+# version number in eleven other registries. Tag-triggered rather than
+# push-triggered because every registry here treats a published version as
+# PERMANENT: npm's unpublish window is 72 hours, crates.io and the Go module
+# proxy are immutable outright, and Maven Central has no delete at all.
+#
+# One file rather than twelve near-identical ones. The TAG CONVENTION matches
+# misarmail-sdks and misarblog-sdks exactly — that is the part Go and the
+# tooling actually depend on — but the twelve jobs share a single gate and a
+# single place to fix a bug.
+#
+# Two registries need no stored credential here, because GitHub is a supported
+# OIDC provider for both: PyPI Trusted Publishing and pub.dev automated
+# publishing. That is a real security win over a self-hosted runner, where both
+# would require a long-lived token sitting in a secret store.
+
+on:
+  push:
+    tags: ['*/v*']
+  workflow_dispatch:
+    inputs:
+      sdk:
+        description: 'SDK to publish'
+        required: true
+        type: choice
+        options: [typescript, python, rust, ruby, dart, flutter, java, kotlin, csharp, go, swift, php]
+      version:
+        description: 'Version (must match the manifest)'
+        required: true
+        type: string
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Gate ──────────────────────────────────────────────────────────────────
+  # Runs before any credential is touched, so a bad tag costs seconds and has
+  # published nothing.
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sdk: ${{ steps.parse.outputs.sdk }}
+      version: ${{ steps.parse.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: parse
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SDK="${{ inputs.sdk }}"; VERSION="${{ inputs.version }}"
+          else
+            REF="${GITHUB_REF#refs/tags/}"
+            if [[ ! "$REF" =~ ^([a-z]+)/v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+              echo "::error::Tag '$REF' does not match <language>/vX.Y.Z"
+              exit 1
+            fi
+            SDK="${BASH_REMATCH[1]}"; VERSION="${BASH_REMATCH[2]}"
+          fi
+
+          KNOWN="typescript python rust ruby dart flutter java kotlin csharp go swift php"
+          if [[ " $KNOWN " != *" $SDK "* ]]; then
+            echo "::error::Unknown SDK '$SDK'"; exit 1
+          fi
+
+          echo "sdk=$SDK" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing $SDK $VERSION"
+
+      # Refuses on a version/manifest mismatch, a missing LICENSE or README, a
+      # publicly-404ing manifest URL, or a manifest no parser accepts.
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: node scripts/check-sdk-release.mjs "${{ steps.parse.outputs.sdk }}" "${{ steps.parse.outputs.version }}"
+
+  npm:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'typescript'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: typescript } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', registry-url: 'https://registry.npmjs.org' }
+      - run: npm install --no-package-lock
+      # tsc is incremental; a stale dist/ silently ships old code.
+      - run: rm -rf dist && npx tsc
+      - run: npm pack --dry-run
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  pypi:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'python'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write      # Trusted Publishing — no API token is stored anywhere
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install --quiet build twine
+      - run: python -m build
+        working-directory: python
+      - run: twine check python/dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist
+
+  crates:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'rust'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: rust } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+      - run: cargo test
+      - run: cargo publish --dry-run
+      - run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  rubygems:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'ruby'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: ruby } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with: { ruby-version: '3.3' }
+      - run: gem build misar_reach.gemspec
+      - name: Publish
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.gem
+          touch ~/.gem/credentials && chmod 0600 ~/.gem/credentials
+          printf -- '---\n:rubygems_api_key: %s\n' "$RUBYGEMS_API_KEY" > ~/.gem/credentials
+          gem push ./*.gem
+        env:
+          RUBYGEMS_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+      - if: always()
+        run: rm -f ~/.gem/credentials
+
+  nuget:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'csharp'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: csharp } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - run: dotnet build --configuration Release
+      - run: dotnet pack --configuration Release --output ./nupkg
+      - run: dotnet nuget push "./nupkg/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+  pub:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'dart' || needs.resolve.outputs.sdk == 'flutter'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write      # pub.dev automated publishing — no credentials file
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - run: dart pub get
+        working-directory: ${{ needs.resolve.outputs.sdk }}
+      - run: dart pub publish --dry-run
+        working-directory: ${{ needs.resolve.outputs.sdk }}
+      - run: dart pub publish --force
+        working-directory: ${{ needs.resolve.outputs.sdk }}
+
+  maven:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'java' || needs.resolve.outputs.sdk == 'kotlin'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_PASSWORD
+          # Central validates every signature against public keyservers and
+          # rejects anything unsigned, so this is a hard requirement.
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+      - if: needs.resolve.outputs.sdk == 'java'
+        run: mvn --batch-mode clean deploy
+        working-directory: java
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      - if: needs.resolve.outputs.sdk == 'kotlin'
+        run: ./gradlew publish --no-daemon
+        working-directory: kotlin
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+  # ── Go: validate only ──────────────────────────────────────────────────────
+  # There is nothing to upload. proxy.golang.org serves the module straight from
+  # this repo's git tag, so the tag IS the release. All this job can usefully do
+  # is prove the tagged tree compiles before anyone fetches it — and warm the
+  # proxy so the first `go get` is instant rather than a cold fetch.
+  go:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'go'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: 'stable' }
+      - run: go build ./... && go vet ./... && go test ./...
+        working-directory: go
+      - name: Warm the module proxy
+        run: |
+          curl -sS "https://proxy.golang.org/github.com/!misar-!a!i/misarreach-sdks/go/@v/go%2Fv${{ needs.resolve.outputs.version }}.info" \
+            || echo "not indexed yet — the proxy will fetch on first use"
+
+  # ── Swift: validate only ───────────────────────────────────────────────────
+  # Swift PM consumers depend on this git URL directly; the tag is the release.
+  # Package.swift must sit at the REPOSITORY ROOT, which is the whole reason this
+  # mirror repo exists.
+  swift:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'swift'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift build
+      - run: swift test
+
+  # ── PHP: ask Packagist to re-crawl ─────────────────────────────────────────
+  # Packagist reads composer.json from this repo and derives versions from tags.
+  # No upload, no publish credential — the token below only makes it re-crawl
+  # now instead of on its own schedule.
+  php:
+    needs: resolve
+    if: needs.resolve.outputs.sdk == 'php'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger re-crawl
+        run: |
+          set -euo pipefail
+          if [ -z "${PACKAGIST_API_TOKEN:-}" ]; then
+            echo "PACKAGIST_API_TOKEN not set — Packagist will pick the tag up on its own schedule."
+            exit 0
+          fi
+          curl -sS -XPOST -H'content-type:application/json' \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_API_TOKEN}" \
+            -d '{"repository":{"url":"https://packagist.org/packages/misarai/misarreach-php"}}'
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}

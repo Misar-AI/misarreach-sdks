@@ -1,0 +1,823 @@
+import Foundation
+
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
+// MARK: - Client
+
+/// MisarReach API client — lead finder, CRM (deals + pipeline), multi-channel
+/// outreach, autopilot, and sales-agent automation.
+///
+/// Authenticates with a `mrk_` API key (Bearer) against
+/// `https://api.misar.io/reach/api`. All methods perform up to ``maxRetries``
+/// attempts with exponential back-off on retryable HTTP statuses
+/// (429, 500, 502, 503, 504); the final failure is surfaced as a typed
+/// ``MisarReachError``.
+public final class MisarReachClient {
+
+    public let apiKey: String
+    public let baseURL: String
+    public let maxRetries: Int
+    public let session: URLSession
+
+    private static let retryableStatuses: Set<Int> = [429, 500, 502, 503, 504]
+
+    public init(
+        apiKey: String,
+        baseURL: String = "https://api.misar.io/reach/api",
+        maxRetries: Int = 3,
+        session: URLSession = .shared
+    ) {
+        self.apiKey = apiKey
+        let trimmed = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+        self.baseURL = trimmed
+        self.maxRetries = maxRetries
+        self.session = session
+    }
+
+    // MARK: Core request
+
+    internal func request(
+        method: String,
+        path: String,
+        body: [String: Any]? = nil
+    ) async throws -> [String: Any] {
+        guard let url = URL(string: baseURL + path) else {
+            throw MisarReachError.networkError(message: "Invalid URL: \(baseURL + path)")
+        }
+
+        var urlRequest = URLRequest(url: url, timeoutInterval: 30)
+        urlRequest.httpMethod = method
+        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        if let body = body {
+            urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+
+        var lastError: Error?
+
+        for attempt in 0..<maxRetries {
+            if attempt > 0 {
+                let delayNs = UInt64(500_000_000) * UInt64(1 << (attempt - 1))
+                try await Task.sleep(nanoseconds: delayNs)
+            }
+
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await session.data(for: urlRequest)
+            } catch {
+                lastError = error
+                continue
+            }
+
+            guard let http = response as? HTTPURLResponse else {
+                lastError = MisarReachError.networkError(message: "Non-HTTP response")
+                continue
+            }
+
+            let status = http.statusCode
+
+            if Self.retryableStatuses.contains(status) && attempt < maxRetries - 1 {
+                lastError = MisarReachError.apiError(status: status, message: "retryable", code: nil)
+                continue
+            }
+
+            if (200..<300).contains(status) {
+                if data.isEmpty { return [:] }
+                guard let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return [:]
+                }
+                return parsed
+            }
+
+            throw Self.mapError(status: status, data: data)
+        }
+
+        throw MisarReachError.networkError(message: "max retries exceeded: \(lastError?.localizedDescription ?? "unknown")")
+    }
+
+    /// Maps a non-2xx response into a typed ``MisarReachError``.
+    internal static func mapError(status: Int, data: Data) -> MisarReachError {
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        let message = (obj["error"] as? String)
+            ?? (obj["message"] as? String)
+            ?? (String(data: data, encoding: .utf8).flatMap { $0.isEmpty ? nil : $0 })
+            ?? "error"
+
+        if status == 429 {
+            let balance = (obj["balance"] as? NSNumber)?.doubleValue ?? (obj["balance"] as? Double)
+            let freeRemaining = (obj["freeRemaining"] as? NSNumber)?.intValue ?? (obj["freeRemaining"] as? Int)
+            let upgrade = (obj["upgrade"] as? Bool) ?? false
+            return .rateLimit(message: message, balance: balance, freeRemaining: freeRemaining, upgrade: upgrade)
+        }
+
+        let code = obj["code"] as? String
+        return .apiError(status: status, message: message, code: code)
+    }
+
+    // MARK: Server-Sent Events
+
+    /// Opens a Server-Sent Events stream and invokes `onEvent` for each event
+    /// until the stream terminates. If the endpoint returns a plain JSON
+    /// snapshot (job already finished), a single synthetic `snapshot` event is
+    /// delivered instead.
+    internal func stream(
+        path: String,
+        onEvent: @escaping (MisarReachStreamEvent) -> Void
+    ) async throws {
+        guard let url = URL(string: baseURL + path) else {
+            throw MisarReachError.networkError(message: "Invalid URL: \(baseURL + path)")
+        }
+
+        var urlRequest = URLRequest(url: url, timeoutInterval: 300)
+        urlRequest.httpMethod = "GET"
+        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+
+        let (bytes, response): (URLSession.AsyncBytes, URLResponse)
+        do {
+            (bytes, response) = try await session.bytes(for: urlRequest)
+        } catch {
+            throw MisarReachError.networkError(message: error.localizedDescription)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw MisarReachError.networkError(message: "Non-HTTP response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            var buffer = Data()
+            for try await byte in bytes { buffer.append(byte) }
+            throw Self.mapError(status: http.statusCode, data: buffer)
+        }
+
+        // Non-stream fallback: server returned a JSON snapshot.
+        let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+        if !contentType.contains("text/event-stream") {
+            var buffer = Data()
+            for try await byte in bytes { buffer.append(byte) }
+            let obj = (try? JSONSerialization.jsonObject(with: buffer)) as? [String: Any] ?? [:]
+            onEvent(MisarReachStreamEvent(
+                event: "snapshot",
+                data: obj,
+                raw: String(data: buffer, encoding: .utf8) ?? ""
+            ))
+            return
+        }
+
+        var eventName = "message"
+        var dataLines: [String] = []
+
+        func dispatch() {
+            guard !dataLines.isEmpty else { eventName = "message"; return }
+            let raw = dataLines.joined(separator: "\n")
+            let obj = raw.data(using: .utf8)
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
+            onEvent(MisarReachStreamEvent(event: eventName, data: obj, raw: raw))
+            eventName = "message"
+            dataLines = []
+        }
+
+        for try await line in bytes.lines {
+            if line.isEmpty {
+                dispatch()
+            } else if line.hasPrefix(":") {
+                continue // comment / heartbeat
+            } else if line.hasPrefix("event:") {
+                eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("data:") {
+                dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+            }
+        }
+        dispatch()
+    }
+
+    // MARK: - Resource accessors
+
+    public lazy var leads         = LeadsResource(client: self)
+    public lazy var ads           = AdsResource(client: self)
+    public lazy var autopilot     = AutopilotResource(client: self)
+    public lazy var campaigns     = CampaignsResource(client: self)
+    public lazy var channels      = ChannelsResource(client: self)
+    public lazy var contacts      = ContactsResource(client: self)
+    public lazy var conversations = ConversationsResource(client: self)
+    public lazy var deals         = DealsResource(client: self)
+    public lazy var pipeline      = PipelineResource(client: self)
+    public lazy var salesAgent    = SalesAgentResource(client: self)
+    public lazy var settings      = SettingsResource(client: self)
+    public lazy var workspaces    = WorkspacesResource(client: self)
+    public lazy var campaignTemplates = CampaignTemplatesResource(client: self)
+    public lazy var deliverability    = DeliverabilityResource(client: self)
+    public lazy var notifications     = NotificationsResource(client: self)
+    public lazy var webhooks          = WebhooksResource(client: self)
+}
+
+// MARK: - LeadsResource (lead-finder)
+
+public class LeadsResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /lead-finder/account
+    public func account() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/lead-finder/account")
+    }
+
+    /// GET /lead-finder/config
+    public func config() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/lead-finder/config")
+    }
+
+    /// GET /lead-finder/leads
+    public func list(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/lead-finder/leads?\($0)" } ?? "/lead-finder/leads"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// GET /lead-finder/export
+    public func export(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/lead-finder/export?\($0)" } ?? "/lead-finder/export"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// POST /lead-finder/search — start an async lead search.
+    public func search(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/search", body: data)
+    }
+
+    /// POST /lead-finder/discover
+    public func discoverCompanies(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/discover", body: data)
+    }
+
+    /// POST /lead-finder/enrich
+    public func enrich(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/enrich", body: data)
+    }
+
+    /// POST /lead-finder/verify
+    public func verifyEmails(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/verify", body: data)
+    }
+
+    /// POST /lead-finder/score
+    public func score(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/score", body: data)
+    }
+
+    /// GET /lead-finder/jobs/{jobId}
+    public func jobStatus(jobId: String) async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/lead-finder/jobs/\(jobId)")
+    }
+
+    /// POST /lead-finder/jobs/{jobId}/feedback
+    public func submitFeedback(jobId: String, data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/jobs/\(jobId)/feedback", body: data)
+    }
+
+    /// GET /lead-finder/jobs/{jobId}/stream — Server-Sent Events live progress.
+    public func streamJob(
+        jobId: String,
+        onEvent: @escaping (MisarReachStreamEvent) -> Void
+    ) async throws {
+        try await client.stream(path: "/lead-finder/jobs/\(jobId)/stream", onEvent: onEvent)
+    }
+
+    /// GET /lead-finder/lists
+    public func listLeadLists() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/lead-finder/lists")
+    }
+
+    /// POST /lead-finder/lists
+    public func createLeadList(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/lists", body: data)
+    }
+
+    /// POST /lead-finder/lists/{listId}/sync
+    public func syncLeadList(listId: String, data: [String: Any] = [:]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/lists/\(listId)/sync", body: data)
+    }
+
+    /// GET /lead-finder/saved-searches
+    public func savedSearches() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/lead-finder/saved-searches")
+    }
+
+    /// POST /lead-finder/saved-searches
+    public func createSavedSearch(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/saved-searches", body: data)
+    }
+
+    /// DELETE /lead-finder/saved-searches/{id}
+    public func deleteSavedSearch(id: String) async throws -> [String: Any] {
+        try await client.request(method: "DELETE", path: "/lead-finder/saved-searches/\(id)")
+    }
+
+    /// GET /lead-finder/scoring-rules
+    public func scoringRules() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/lead-finder/scoring-rules")
+    }
+
+    /// POST /lead-finder/scoring-rules
+    public func createScoringRule(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/scoring-rules", body: data)
+    }
+
+    /// PATCH /lead-finder/scoring-rules/{id}
+    public func updateScoringRule(id: String, data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "PATCH", path: "/lead-finder/scoring-rules/\(id)", body: data)
+    }
+
+    /// DELETE /lead-finder/scoring-rules/{id}
+    public func deleteScoringRule(id: String) async throws -> [String: Any] {
+        try await client.request(method: "DELETE", path: "/lead-finder/scoring-rules/\(id)")
+    }
+
+    /// GET /lead-finder/recommendations
+    public func recommendations(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/lead-finder/recommendations?\($0)" } ?? "/lead-finder/recommendations"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// GET /lead-finder/search-history
+    public func searchHistory(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/lead-finder/search-history?\($0)" } ?? "/lead-finder/search-history"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// POST /lead-finder/preview-message — public, no auth required.
+    public func previewMessage(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/preview-message", body: data)
+    }
+
+    /// POST /lead-finder/send-to-campaign
+    public func sendToCampaign(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/send-to-campaign", body: data)
+    }
+
+    /// POST /lead-finder/add-to-segment
+    public func addToSegment(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/lead-finder/add-to-segment", body: data)
+    }
+
+    /// GET /lead-finder/companies/{domain}
+    public func company(domain: String) async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/lead-finder/companies/\(domain)")
+    }
+
+    /// GET /lead-finder/companies/{domain}/people
+    public func companyPeople(domain: String, params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/lead-finder/companies/\(domain)/people?\($0)" } ?? "/lead-finder/companies/\(domain)/people"
+        return try await client.request(method: "GET", path: path)
+    }
+}
+
+// MARK: - AdsResource
+
+public class AdsResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// POST /ads/linkedin/company-audience
+    public func linkedinCompanyAudience(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/ads/linkedin/company-audience", body: data)
+    }
+}
+
+// MARK: - AutopilotResource
+
+public class AutopilotResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /autopilot/runs
+    public func runs(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/autopilot/runs?\($0)" } ?? "/autopilot/runs"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// POST /autopilot/start
+    public func start(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/autopilot/start", body: data)
+    }
+
+    /// GET /autopilot/{id}
+    public func get(id: String) async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/autopilot/\(id)")
+    }
+
+    /// GET /autopilot/{id}/status
+    public func status(id: String) async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/autopilot/\(id)/status")
+    }
+
+    /// POST /autopilot/{id}/status
+    public func setStatus(id: String, data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/autopilot/\(id)/status", body: data)
+    }
+}
+
+// MARK: - CampaignsResource
+
+public class CampaignsResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /campaigns
+    public func list(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/campaigns?\($0)" } ?? "/campaigns"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// POST /campaigns
+    public func create(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/campaigns", body: data)
+    }
+
+    /// GET /campaigns/{id}
+    public func get(id: String) async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/campaigns/\(id)")
+    }
+
+    /// PATCH /campaigns/{id}
+    public func update(id: String, data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "PATCH", path: "/campaigns/\(id)", body: data)
+    }
+
+    /// DELETE /campaigns/{id}
+    public func delete(id: String) async throws -> [String: Any] {
+        try await client.request(method: "DELETE", path: "/campaigns/\(id)")
+    }
+
+    /// POST /campaigns/{id}/enqueue
+    public func enqueue(id: String, data: [String: Any] = [:]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/campaigns/\(id)/enqueue", body: data)
+    }
+}
+
+// MARK: - ChannelsResource
+
+public class ChannelsResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /channels/status
+    public func status() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/channels/status")
+    }
+
+    /// PATCH /channels/status
+    public func updateStatus(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "PATCH", path: "/channels/status", body: data)
+    }
+
+    /// GET /channels/opt-in-links
+    public func optInLinks(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/channels/opt-in-links?\($0)" } ?? "/channels/opt-in-links"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// POST /channels/sms/connect
+    public func connectSms(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/channels/sms/connect", body: data)
+    }
+
+    /// POST /channels/whatsapp/connect
+    public func connectWhatsapp(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/channels/whatsapp/connect", body: data)
+    }
+
+    /// POST /channels/telegram/connect
+    public func connectTelegram(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/channels/telegram/connect", body: data)
+    }
+
+    /// POST /channels/twitter/connect
+    public func connectTwitter(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/channels/twitter/connect", body: data)
+    }
+
+    /// POST /channels/instagram/connect
+    public func connectInstagram(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/channels/instagram/connect", body: data)
+    }
+
+    /// POST /channels/facebook/connect
+    public func connectFacebook(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/channels/facebook/connect", body: data)
+    }
+
+    /// POST /channels/discord/connect
+    public func connectDiscord(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/channels/discord/connect", body: data)
+    }
+
+    /// POST /channels/push/subscribe
+    public func subscribePush(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/channels/push/subscribe", body: data)
+    }
+
+    /// DELETE /channels/push/subscribe
+    public func unsubscribePush() async throws -> [String: Any] {
+        try await client.request(method: "DELETE", path: "/channels/push/subscribe")
+    }
+}
+
+// MARK: - ContactsResource
+
+public class ContactsResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /contacts
+    public func list(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/contacts?\($0)" } ?? "/contacts"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// POST /contacts
+    public func create(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/contacts", body: data)
+    }
+
+    /// GET /contacts/{id}
+    public func get(id: String) async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/contacts/\(id)")
+    }
+
+    /// PATCH /contacts/{id}
+    public func update(id: String, data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "PATCH", path: "/contacts/\(id)", body: data)
+    }
+
+    /// DELETE /contacts/{id}
+    public func delete(id: String) async throws -> [String: Any] {
+        try await client.request(method: "DELETE", path: "/contacts/\(id)")
+    }
+
+    /// POST /contacts/bulk
+    public func bulk(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/contacts/bulk", body: data)
+    }
+
+    /// POST /contacts/import
+    public func importContacts(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/contacts/import", body: data)
+    }
+
+    /// GET /contacts/segments
+    public func segments() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/contacts/segments")
+    }
+
+    /// GET /contacts/stats
+    public func stats() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/contacts/stats")
+    }
+}
+
+// MARK: - ConversationsResource
+
+public class ConversationsResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /conversations
+    public func list(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/conversations?\($0)" } ?? "/conversations"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// GET /conversations/{email}
+    public func get(email: String) async throws -> [String: Any] {
+        let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? email
+        return try await client.request(method: "GET", path: "/conversations/\(encoded)")
+    }
+
+    /// POST /conversations/{email}/reply
+    public func reply(email: String, data: [String: Any]) async throws -> [String: Any] {
+        let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? email
+        return try await client.request(method: "POST", path: "/conversations/\(encoded)/reply", body: data)
+    }
+}
+
+// MARK: - CampaignTemplatesResource
+
+public class CampaignTemplatesResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /campaign-templates
+    public func list(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/campaign-templates?\($0)" } ?? "/campaign-templates"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// POST /campaign-templates
+    public func create(data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/campaign-templates", body: data)
+    }
+}
+
+// MARK: - DeliverabilityResource
+
+public class DeliverabilityResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /deliverability
+    ///
+    /// `bounceRate` and `complaintRate` are null when there is not enough volume
+    /// to judge — which is not the same as zero.
+    public func get(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/deliverability?\($0)" } ?? "/deliverability"
+        return try await client.request(method: "GET", path: path)
+    }
+}
+
+// MARK: - NotificationsResource
+
+public class NotificationsResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /notifications
+    public func list(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/notifications?\($0)" } ?? "/notifications"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// PATCH /notifications — pass `["ids": [...]]` or `["all": true]`.
+    public func markRead(data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "PATCH", path: "/notifications", body: data)
+    }
+}
+
+// MARK: - WebhooksResource
+
+public class WebhooksResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /webhooks/endpoints
+    public func list() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/webhooks/endpoints")
+    }
+
+    /// POST /webhooks/endpoints
+    ///
+    /// The response carries the signing secret exactly once — store it then; it
+    /// is not retrievable afterwards.
+    public func create(data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/webhooks/endpoints", body: data)
+    }
+}
+
+// MARK: - DealsResource
+
+public class DealsResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /deals
+    public func list(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/deals?\($0)" } ?? "/deals"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// POST /deals
+    public func create(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/deals", body: data)
+    }
+
+    /// PATCH /deals/{id}
+    public func update(id: String, data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "PATCH", path: "/deals/\(id)", body: data)
+    }
+
+    /// DELETE /deals/{id}
+    public func delete(id: String) async throws -> [String: Any] {
+        try await client.request(method: "DELETE", path: "/deals/\(id)")
+    }
+
+    /// GET /deals/{id}/activity
+    public func activity(id: String) async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/deals/\(id)/activity")
+    }
+
+    /// GET /deals/{id}/suggestions
+    public func suggestions(id: String) async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/deals/\(id)/suggestions")
+    }
+
+    /// POST /deals/bulk — one operation over many deals,
+    /// `["ids": [...], "op": "tag"|"untag"|"stage"|"delete", ...]`. Tag writes are
+    /// applied atomically server-side, so concurrent callers cannot lose a tag.
+    public func bulk(data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/deals/bulk", body: data)
+    }
+}
+
+// MARK: - PipelineResource
+
+public class PipelineResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /pipeline
+    public func get() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/pipeline")
+    }
+
+    /// POST /pipeline
+    public func create(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/pipeline", body: data)
+    }
+}
+
+// MARK: - SalesAgentResource
+
+public class SalesAgentResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /sales-agent/actions
+    public func actions(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/sales-agent/actions?\($0)" } ?? "/sales-agent/actions"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// GET /sales-agent/config
+    public func config() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/sales-agent/config")
+    }
+
+    /// PATCH /sales-agent/config
+    public func updateConfig(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "PATCH", path: "/sales-agent/config", body: data)
+    }
+
+    /// GET /sales-agent/conversations
+    public func conversations(params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/sales-agent/conversations?\($0)" } ?? "/sales-agent/conversations"
+        return try await client.request(method: "GET", path: path)
+    }
+
+    /// POST /sales-agent/process
+    public func process(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/sales-agent/process", body: data)
+    }
+}
+
+// MARK: - SettingsResource
+
+public class SettingsResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /settings/sender-address
+    public func senderAddress() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/settings/sender-address")
+    }
+
+    /// PUT /settings/sender-address
+    public func setSenderAddress(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "PUT", path: "/settings/sender-address", body: data)
+    }
+}
+
+// MARK: - WorkspacesResource
+
+public class WorkspacesResource {
+    private unowned let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// GET /workspaces
+    public func list() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/workspaces")
+    }
+
+    /// POST /workspaces
+    public func create(_ data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/workspaces", body: data)
+    }
+
+    /// GET /workspaces/{id}/members
+    public func listMembers(id: String) async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/workspaces/\(id)/members")
+    }
+
+    /// POST /workspaces/{id}/members
+    public func addMember(id: String, data: [String: Any]) async throws -> [String: Any] {
+        try await client.request(method: "POST", path: "/workspaces/\(id)/members", body: data)
+    }
+
+    /// DELETE /workspaces/{id}/members
+    public func removeMember(id: String, params: String? = nil) async throws -> [String: Any] {
+        let path = params.map { "/workspaces/\(id)/members?\($0)" } ?? "/workspaces/\(id)/members"
+        return try await client.request(method: "DELETE", path: path)
+    }
+}

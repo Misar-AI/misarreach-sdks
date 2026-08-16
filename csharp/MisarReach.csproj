@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Misar.Reach</RootNamespace>
+    <AssemblyName>MisarReach</AssemblyName>
+
+    <!-- NuGet metadata -->
+    <PackageId>Misar.Reach</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Misar AI</Authors>
+    <Company>Misar AI Technology Pvt Ltd</Company>
+    <Description>Official C# SDK for MisarReach — lead finder (23 sources), multi-channel outreach, and CRM (deals, pipeline, sales agents). Full API coverage with async/await support.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://reach.misar.io/docs</PackageProjectUrl>
+    <RepositoryUrl>https://reach.misar.io</RepositoryUrl>
+    <PackageTags>misarreach;leads;outreach;crm;sdk;api;sales</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

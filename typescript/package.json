@@ -1,0 +1,54 @@
+{
+  "name": "@misarreach/sdk",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for the MisarReach API (api.misar.io/reach/api)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "author": "Misar AI <support@misar.io>",
+  "homepage": "https://reach.misar.io/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/misaradmin/misarreach-sdk-js.git"
+  },
+  "bugs": {
+    "url": "https://reach.misar.io/contact"
+  },
+  "keywords": [
+    "misarreach",
+    "outreach",
+    "lead-finder",
+    "crm",
+    "pipeline",
+    "sdk",
+    "typescript",
+    "api-client"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

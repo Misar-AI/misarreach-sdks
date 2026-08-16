@@ -1,0 +1,122 @@
+name: Auto-tag on version bump
+
+# Turns a deliberate version bump into a release tag, which is what actually
+# triggers publishing (see publish.yml).
+#
+# It fires only when an SDK's manifest version CHANGES between the previous
+# commit and this one. A code-only sync tags nothing, so routine mirrors are
+# silent — the version number is the release signal, and bumping it is always a
+# deliberate act.
+#
+# Tag shape is `<language>/vX.Y.Z`, matching misarmail-sdks and misarblog-sdks.
+# This is not cosmetic: a Go module in the go/ subdirectory is ONLY resolvable
+# by a `go/vX.Y.Z` tag, and a bare `vX.Y.Z` would leave `go get` unable to find
+# any version at all.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag every SDK whose version changed
+        run: |
+          set -euo pipefail
+
+          # Read the shipped version out of one SDK's manifest at a given ref.
+          # Prints nothing when the SDK has no manifest version (go, swift, php
+          # are tag-versioned) or the file does not exist at that ref.
+          version_at() {
+            local ref="$1" lang="$2" file expr
+            case "$lang" in
+              typescript) file="typescript/package.json" ;;
+              python)     file="python/pyproject.toml" ;;
+              rust)       file="rust/Cargo.toml" ;;
+              ruby)       file="ruby/misar_reach.gemspec" ;;
+              dart)       file="dart/pubspec.yaml" ;;
+              flutter)    file="flutter/pubspec.yaml" ;;
+              java)       file="java/pom.xml" ;;
+              kotlin)     file="kotlin/build.gradle.kts" ;;
+              csharp)     file="csharp/MisarReach.csproj" ;;
+              *)          return 0 ;;
+            esac
+
+            local content
+            content="$(git show "${ref}:${file}" 2>/dev/null)" || return 0
+
+            case "$lang" in
+              typescript) printf '%s' "$content" | jq -r '.version // empty' ;;
+              python|rust) printf '%s' "$content" | grep -m1 -E '^version[[:space:]]*=' | grep -oE '"[^"]+"' | tr -d '"' ;;
+              ruby|kotlin) printf '%s' "$content" | grep -m1 -E 'version[[:space:]]*=' | grep -oE '"[^"]+"' | tr -d '"' ;;
+              dart|flutter) printf '%s' "$content" | grep -m1 -E '^version:' | awk '{print $2}' ;;
+              java) printf '%s' "$content" | grep -m1 -oE '<version>[^<]+</version>' | sed 's/<[^>]*>//g' ;;
+              csharp) printf '%s' "$content" | grep -m1 -oE '<Version>[^<]+</Version>' | sed 's/<[^>]*>//g' ;;
+            esac
+          }
+
+          # First push to a fresh mirror has no parent to diff against; tag
+          # everything so the initial release is complete rather than empty.
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            PREV="HEAD~1"
+          else
+            PREV=""
+            echo "No parent commit — treating this as the initial release."
+          fi
+
+          git config user.name  "MisarReach CI"
+          git config user.email "ci@misar.io"
+
+          TAGGED=0
+          for LANG in typescript python rust ruby dart flutter java kotlin csharp; do
+            NOW="$(version_at HEAD "$LANG" || true)"
+            [ -n "$NOW" ] || continue
+
+            if [ -n "$PREV" ]; then
+              OLD="$(version_at "$PREV" "$LANG" || true)"
+              if [ "$NOW" = "$OLD" ]; then
+                echo "· $LANG unchanged at $NOW"
+                continue
+              fi
+            fi
+
+            TAG="$LANG/v$NOW"
+            if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "! $TAG already exists — refusing to move a released tag"
+              continue
+            fi
+
+            echo "+ $TAG"
+            git tag "$TAG"
+            git push origin "$TAG"
+            TAGGED=$((TAGGED + 1))
+          done
+
+          # go, swift and php carry no manifest version. They ride the release
+          # of the fleet: tag them whenever anything else was tagged, using the
+          # typescript version as the fleet version.
+          if [ "$TAGGED" -gt 0 ]; then
+            FLEET="$(version_at HEAD typescript || true)"
+            if [ -n "$FLEET" ]; then
+              for LANG in go swift php; do
+                TAG="$LANG/v$FLEET"
+                if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+                  echo "! $TAG already exists"
+                  continue
+                fi
+                echo "+ $TAG (tag-versioned SDK, riding fleet version)"
+                git tag "$TAG"
+                git push origin "$TAG"
+              done
+            fi
+          fi
+
+          echo "Tagged $TAGGED versioned SDK(s)."

@@ -1,0 +1,25 @@
+[package]
+name = "misarreach"
+version = "1.0.0"
+edition = "2021"
+description = "Official Rust SDK for MisarReach — full dev-API coverage, async, retry, SSE lead-job streaming"
+license = "MIT"
+authors = ["Misar AI <hello@misar.io>"]
+homepage = "https://reach.misar.io/docs/sdks/rust"
+repository = "https://github.com/misarai/misarreach-rust"
+documentation = "https://reach.misar.io/docs"
+keywords = ["outreach", "leads", "crm", "misarreach", "api"]
+categories = ["api-bindings"]
+readme = "README.md"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+futures-util = "0.3"
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { version = "1", features = ["full"] }

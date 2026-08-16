@@ -1,0 +1,16 @@
+name: misar_reach
+description: Official Dart SDK for MisarReach — lead finder, multi-channel outreach, CRM, autopilot. Full API coverage with retry logic and SSE streaming.
+version: 1.0.0
+homepage: https://reach.misar.io/docs
+documentation: https://reach.misar.io/docs
+issue_tracker: https://reach.misar.io/contact
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  http: ^1.2.0
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^3.0.0

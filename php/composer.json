@@ -1,0 +1,35 @@
+{
+    "name": "misarai/misarreach-php",
+    "description": "Official PHP SDK for MisarReach — lead finder, multi-channel outreach, and CRM. Full API coverage.",
+    "type": "library",
+    "license": "MIT",
+    "homepage": "https://reach.misar.io",
+    "keywords": ["misarreach", "leads", "outreach", "crm", "sdk", "php", "sales"],
+    "authors": [
+        {
+            "name": "Misar AI",
+            "email": "hello@misar.io"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "MisarReach\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MisarReach\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit tests/"
+    }
+}

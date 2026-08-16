@@ -1,0 +1,40 @@
+# Per-language build output and dependency caches.
+#
+# pubspec.lock is ignored deliberately: these are published *libraries*, not
+# applications, and a committed lockfile pins resolution for every consumer.
+
+# Dart / Flutter
+.dart_tool/
+pubspec.lock
+build/
+
+# Swift
+.build/
+*.xcodeproj
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+dist/
+
+# Rust
+target/
+
+# Java / Kotlin
+bin/
+.gradle/
+
+# .NET
+obj/
+
+# Ruby
+.bundle/
+vendor/bundle/
+
+# PHP
+vendor/
+
+# Node
+node_modules/
