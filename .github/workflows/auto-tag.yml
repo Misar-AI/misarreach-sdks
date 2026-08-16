@@ -44,10 +44,18 @@ jobs:
           # immediately.
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
 
+      # Checked at runtime, not with `if:` — the `secrets` context is not
+      # available in step conditionals, and referencing it there fails the whole
+      # workflow at validation time with no job ever starting.
       - name: Warn if tags cannot trigger a publish
-        if: ${{ !secrets.RELEASE_TOKEN }}
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          echo "::warning::RELEASE_TOKEN is not set. Tags will be created with GITHUB_TOKEN, which cannot trigger publish.yml — you will have to run it manually per SDK. See the comment in this file."
+          if [ -z "${RELEASE_TOKEN:-}" ]; then
+            echo "::warning::RELEASE_TOKEN is not set. Tags will be created with GITHUB_TOKEN, which cannot trigger publish.yml — each SDK will need publish.yml run manually. See the comment in this file."
+          else
+            echo "RELEASE_TOKEN present — tags will trigger publish.yml."
+          fi
 
       - name: Tag every SDK whose version changed
         run: |
