@@ -58,7 +58,24 @@ jobs:
           fi
 
       - name: Tag every SDK whose version changed
+        env:
+          TARGETS: ${{ vars.SDK_PUBLISH_TARGETS }}
         run: |
+          # SAFETY GATE. Tagging is releasing: publish.yml triggers on these
+          # tags. SDK_PUBLISH_TARGETS names the languages allowed to be tagged;
+          # unset means dry run, which is the default, because a bump that
+          # touches every SDK would otherwise release the whole fleet at once
+          # and a published version can never be replaced.
+          #
+          # Gating this loop is sufficient for the fleet and bare tags below:
+          # both are conditioned on TAGGED > 0, which only increments here.
+          GATE=",$(echo "${TARGETS:-}" | tr -d '[:space:]'),"
+          if [ "$GATE" = ",," ]; then
+            echo "::notice::SDK_PUBLISH_TARGETS is unset — DRY RUN, nothing will be tagged."
+          else
+            echo "::notice::Tagging enabled for: ${TARGETS}"
+          fi
+
           set -euo pipefail
 
           # Read the shipped version out of one SDK's manifest at a given ref.
@@ -120,6 +137,12 @@ jobs:
             TAG="$LANG/v$NOW"
             if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
               echo "! $TAG already exists — refusing to move a released tag"
+              continue
+            fi
+
+            if ! echo "$GATE" | grep -q ",${LANG}," && ! echo "$GATE" | grep -q ",all,"; then
+              echo "🔒 would tag $TAG — withheld, $LANG not in SDK_PUBLISH_TARGETS"
+              echo "- \`$TAG\` withheld (gate)" >> "$GITHUB_STEP_SUMMARY"
               continue
             fi
 
