@@ -219,6 +219,13 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: python/dist
+          # Trusted publishing still authenticates; it is the attestation PyPI
+          # rejects. It verifies the signing certificate's Build Config URI
+          # against the registered publisher, and now that auto-tag.yml calls
+          # this workflow the certificate names auto-tag.yml while the publisher
+          # is registered for publish.yml — "400 Invalid attestations supplied".
+          # Re-registering the publisher against auto-tag.yml restores them.
+          attestations: false
 
   # ── crates.io: token ───────────────────────────────────────────────────────
   # Stays on a secret. Nothing here is skippable: without the token there is no
