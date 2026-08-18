@@ -397,7 +397,23 @@ jobs:
         working-directory: ${{ needs.resolve.outputs.sdk }}
       - run: dart pub publish --dry-run
         working-directory: ${{ needs.resolve.outputs.sdk }}
-      - run: dart pub publish --force
+      # `dart pub` prefers the OIDC token whenever GitHub injects
+      # ACTIONS_ID_TOKEN_REQUEST_*, which it does because this job requests
+      # id-token: write. OIDC cannot CREATE a package — pub.dev answers "Only
+      # users are allowed to upload new packages" — so for a first publish the
+      # credentials file has to win. Clearing those two variables is what makes
+      # it fall back to the file we just wrote.
+      - run: |
+          set -euo pipefail
+          if [ -n "${PUB_CREDENTIALS_PRESENT:-}" ]; then
+            unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+            echo "publishing with the credentials file"
+          else
+            echo "publishing over OIDC"
+          fi
+          dart pub publish --force
+        env:
+          PUB_CREDENTIALS_PRESENT: ${{ secrets.PUB_CREDENTIALS != '' && '1' || '' }}
         working-directory: ${{ needs.resolve.outputs.sdk }}
 
   # ── Maven Central: token + GPG ─────────────────────────────────────────────
