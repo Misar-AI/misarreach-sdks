@@ -35,6 +35,20 @@ name: Publish SDK
 on:
   push:
     tags: ['*/v*', 'v*']   # bare v* is the Swift PM release tag
+  # Callable so auto-tag.yml can publish inside its OWN run. A tag pushed with
+  # the default GITHUB_TOKEN starts no workflow (GitHub's loop prevention), so
+  # the push: trigger above only fires for tags pushed by a human or a PAT.
+  # Being called directly removes that dependency entirely.
+  workflow_call:
+    inputs:
+      sdk:
+        description: 'SDK to publish'
+        required: true
+        type: string
+      version:
+        description: 'Version (must match the manifest)'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       sdk:
