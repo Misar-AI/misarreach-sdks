@@ -20,9 +20,9 @@ Gradle (Kotlin DSL):
 
 ```kotlin
 dependencies {
-    implementation("io.misar:misarreach-kotlin:5.0.1")
+    implementation("io.misar:misarreach-kotlin:5.0.2")
     // Declare coroutines yourself — see the note below.
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:5.0.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:5.0.2")
 }
 ```
 
@@ -30,8 +30,8 @@ Gradle (Groovy DSL):
 
 ```groovy
 dependencies {
-    implementation 'io.misar:misarreach-kotlin:5.0.1'
-    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:5.0.1'
+    implementation 'io.misar:misarreach-kotlin:5.0.2'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:5.0.2'
 }
 ```
 
@@ -42,12 +42,12 @@ Maven:
   <dependency>
     <groupId>io.misar</groupId>
     <artifactId>misarreach-kotlin</artifactId>
-    <version>5.0.1</version>
+    <version>5.0.2</version>
   </dependency>
   <dependency>
     <groupId>org.jetbrains.kotlinx</groupId>
     <artifactId>kotlinx-coroutines-core</artifactId>
-    <version>5.0.1</version>
+    <version>5.0.2</version>
   </dependency>
 </dependencies>
 ```

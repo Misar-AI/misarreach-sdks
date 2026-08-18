@@ -25,7 +25,7 @@ Or add it by hand:
 ```yaml
 # pubspec.yaml
 dependencies:
-  misarreach: ^5.0.1
+  misarreach: ^5.0.2
 ```
 
 Requires Dart `>=3.0.0 <4.0.0` and pulls in `http: ^1.2.0`. The client imports

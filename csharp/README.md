@@ -19,14 +19,14 @@ other SDKs the surface is **flat**: there are no resource sub-objects, just
 ## Install
 
 ```bash
-dotnet add package Misar.Reach --version 5.0.1
+dotnet add package Misar.Reach --version 5.0.2
 ```
 
 Or in your `.csproj`:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Misar.Reach" Version="5.0.1" />
+  <PackageReference Include="Misar.Reach" Version="5.0.2" />
 </ItemGroup>
 ```
 

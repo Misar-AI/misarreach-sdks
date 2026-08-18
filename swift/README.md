@@ -20,7 +20,7 @@ returns `[String: Any]`, matching the open-shape API contract. Talks to
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/Misar-AI/misarreach-swift.git", from: "5.0.1"),
+    .package(url: "https://github.com/Misar-AI/misarreach-swift.git", from: "5.0.2"),
 ],
 targets: [
     .target(

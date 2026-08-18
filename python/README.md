@@ -72,7 +72,7 @@ Full reference: [`docs.misar.io/reach`](https://docs.misar.io/reach) · OpenAPI:
 ## Install
 
 ```bash
-pip install misar-reach==5.0.1
+pip install misar-reach==5.0.2
 ```
 
 Requires Python 3.9+. The distribution is named `misar-reach`; the import name

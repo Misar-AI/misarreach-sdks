@@ -74,7 +74,7 @@ What the API covers, and what this package exposes:
 ## Install
 
 ```bash
-npm install @misarreach/sdk@5.0.1
+npm install @misarreach/sdk@5.0.2
 ```
 
 Requires Node 18+ (for global `fetch`). ESM only.

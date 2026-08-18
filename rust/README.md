@@ -19,7 +19,7 @@ callback-driven SSE reader for lead-search progress. Talks to
 
 ```toml
 [dependencies]
-misarreach = "5.0.1"
+misarreach = "5.0.2"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 ```
