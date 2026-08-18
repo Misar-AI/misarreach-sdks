@@ -395,7 +395,15 @@ jobs:
       - run: |
           set -euo pipefail
           if [ -n "${PUB_CREDENTIALS_PRESENT:-}" ]; then
-            unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+            # PUB_TOKEN too, and it is the one that actually mattered:
+            # dart-lang/setup-dart injects an OIDC-derived PUB_TOKEN whenever the
+            # job has id-token: write, and pub prefers PUB_TOKEN over the
+            # credentials file. With it set, every publish authenticated as the
+            # OIDC principal and pub.dev answered "Only users are allowed to
+            # upload new packages" — the credentials file was written, ignored,
+            # and the failure looked like a bad credential rather than a
+            # precedence problem.
+            unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN PUB_TOKEN
             echo "publishing with the credentials file"
           else
             echo "publishing over OIDC"
