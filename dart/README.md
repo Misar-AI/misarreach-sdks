@@ -14,13 +14,13 @@ autopilot, and the AI sales agent.
 ```yaml
 # pubspec.yaml
 dependencies:
-  misar_reach: ^1.0.0
+  misarreach: ^1.0.0
 ```
 
 ## Usage
 
 ```dart
-import 'package:misar_reach/misar_reach.dart';
+import 'package:misarreach/misarreach.dart';
 
 final reach = MisarReachClient(apiKey: 'mrk_...');
 

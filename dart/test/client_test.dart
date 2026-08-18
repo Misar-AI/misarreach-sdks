@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:misar_reach/misar_reach.dart';
+import 'package:misarreach/misarreach.dart';
 import 'package:test/test.dart';
 
 MisarReachClient _client(http.Client mock, {int maxRetries = 1}) =>
