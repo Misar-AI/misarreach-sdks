@@ -452,9 +452,12 @@ jobs:
           [ -n "${OSSRH_USERNAME:-}" ]  || MISSING="$MISSING OSSRH_USERNAME"
           [ -n "${OSSRH_TOKEN:-}" ]     || MISSING="$MISSING OSSRH_TOKEN"
           [ -n "${GPG_PRIVATE_KEY:-}" ] || MISSING="$MISSING GPG_PRIVATE_KEY"
-          [ -n "${GPG_PASSPHRASE:-}" ]  || MISSING="$MISSING GPG_PASSPHRASE"
+          # GPG_PASSPHRASE is deliberately NOT required. This repository's signing
+          # key is unprotected, and a passphrase kept in the same secret store as
+          # the key it protects adds nothing — whoever can read one can read the
+          # other. Both consumers accept an empty value for an unprotected key.
           if [ -n "$MISSING" ]; then
-            echo "::error::missing secret(s):$MISSING — Maven Central needs a portal token (OSSRH_USERNAME/OSSRH_TOKEN) and a GPG signing key (GPG_PRIVATE_KEY/GPG_PASSPHRASE). Add them under Settings → Secrets and variables → Actions."
+            echo "::error::missing secret(s):$MISSING — Maven Central needs a portal token (OSSRH_USERNAME/OSSRH_TOKEN) and a GPG signing key (GPG_PRIVATE_KEY). Add them under Settings → Secrets and variables → Actions."
             exit 1
           fi
 
