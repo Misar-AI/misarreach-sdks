@@ -479,20 +479,19 @@ jobs:
           OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      # The env var NAMES here are dictated by kotlin/build.gradle.kts, which
-      # reads OSSRH_USERNAME / OSSRH_PASSWORD for the Central repository and
-      # MAVEN_GPG_PRIVATE_KEY / MAVEN_GPG_PASSPHRASE for useInMemoryPgpKeys.
-      # This job used to export MAVEN_CENTRAL_* and MAVEN_GPG_PASSPHRASE, none
-      # of which Gradle looks at, so it would have published with blank
-      # credentials and no signing key at all.
+      # kotlin/build.gradle.kts publishes through com.vanniktech.maven.publish,
+      # which reads Gradle properties — the ORG_GRADLE_PROJECT_ prefix is how an
+      # env var becomes one. `gradle publish` with a plain maven repository could
+      # never work here: the Central Portal URL is a bundle POST API, not a Maven
+      # repo, so every per-file PUT 404s.
       - if: needs.resolve.outputs.sdk == 'kotlin'
-        run: gradle publish --no-daemon
+        run: gradle publishToMavenCentral --no-daemon --no-configuration-cache
         working-directory: kotlin
         env:
-          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          OSSRH_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
-          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.OSSRH_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.OSSRH_TOKEN }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_PASSPHRASE }}
 
   # ── Go: validate only ──────────────────────────────────────────────────────
   # There is nothing to upload. proxy.golang.org serves the module straight from
