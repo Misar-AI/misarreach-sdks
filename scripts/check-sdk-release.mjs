@@ -111,7 +111,36 @@ function validateStructure(file, text) {
 
 const problems = [];
 const notes = [];
+const linkChecks = [];
 const fail = (sdk, msg) => problems.push(`${sdk}: ${msg}`);
+
+// Only a definitive "this is not there" blocks a release: 404/410, or a host that
+// does not resolve. A timeout or a 5xx is the registry having a bad minute, not a
+// broken link, and failing on those would make the gate refuse good releases.
+async function verifyLinks(checks) {
+  const byUrl = new Map();
+  for (const { sdk, url } of checks) {
+    if (!byUrl.has(url)) byUrl.set(url, new Set());
+    byUrl.get(url).add(sdk);
+  }
+  await Promise.all([...byUrl].map(async ([url, sdks]) => {
+    let verdict = null;
+    try {
+      const res = await fetch(url, {
+        redirect: "follow",
+        signal: AbortSignal.timeout(15000),
+        headers: { "User-Agent": "misar-sdk-release-gate" },
+      });
+      if (res.status === 404 || res.status === 410) verdict = `returns ${res.status}`;
+    } catch (err) {
+      // fetch collapses DNS failure, TLS failure and timeout into one TypeError,
+      // so pick out the one that means the host genuinely is not there.
+      const cause = String(err?.cause?.code ?? "");
+      if (cause === "ENOTFOUND" || cause === "EAI_AGAIN") verdict = "does not resolve";
+    }
+    if (verdict) for (const sdk of sdks) fail(sdk, `manifest links ${url}, which ${verdict}`);
+  }));
+}
 
 function checkOne(sdk, wantVersion) {
   const spec = MANIFESTS[sdk];
@@ -141,9 +170,16 @@ function checkOne(sdk, wantVersion) {
   if (structural) fail(sdk, structural);
 
   // Dead links render as a broken "Repository"/"Homepage" on the package page.
-  // These two hosts are known-404 and were already cleaned once.
-  for (const dead of ["docs.misar.io/reach", "git.misar.io/misaradmin"]) {
-    if (manifest.includes(dead)) fail(sdk, `manifest points at ${dead}, which 404s publicly`);
+  // Checked for real rather than against a hand-maintained list of hosts believed
+  // dead: that list still called docs.misar.io/reach a 404 long after the docs
+  // site went live, and blocked a release over a URL that works.
+  // An XML namespace is an identifier that happens to look like a URL; nothing is
+  // expected to be served there and maven.apache.org/POM/4.0.0 genuinely 404s. Drop
+  // those attributes before looking for links, or every pom.xml fails this check.
+  const linkText = manifest.replace(/xmlns(?::\w+)?="[^"]*"/g, "")
+                           .replace(/xsi:schemaLocation="[^"]*"/g, "");
+  for (const url of linkText.match(/https?:\/\/[^\s"'<>)\]},\\]+/g) ?? []) {
+    linkChecks.push({ sdk, url: url.replace(/[.,;:]+$/, "") });
   }
 
   const declared = spec.read(manifest);
@@ -181,6 +217,8 @@ if (!arg1 || arg1 === "--all") {
   }
   checkOne(arg1, arg2 ?? null);
 }
+
+await verifyLinks(linkChecks);
 
 for (const n of notes) console.log(`  ok   ${n}`);
 for (const p of problems) console.error(`  FAIL ${p}`);
