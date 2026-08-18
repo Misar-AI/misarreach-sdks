@@ -12,7 +12,7 @@
 
     <name>MisarReach Java SDK</name>
     <description>Official Java SDK for the MisarReach developer API — full coverage, sync + async, SSE lead-job streaming</description>
-    <url>https://reach.misar.io/docs/sdks/java</url>
+    <url>https://misarreach.com/docs/sdks/java</url>
 
     <licenses>
         <license>
@@ -31,9 +31,9 @@
     </developers>
 
     <scm>
-        <connection>scm:git:git://github.com/misarai/misarreach-java.git</connection>
-        <developerConnection>scm:git:ssh://github.com/misarai/misarreach-java.git</developerConnection>
-        <url>https://github.com/misarai/misarreach-java</url>
+        <connection>scm:git:git://github.com/Misar-AI/misarreach-sdks.git</connection>
+        <developerConnection>scm:git:ssh://github.com/Misar-AI/misarreach-sdks.git</developerConnection>
+        <url>https://github.com/Misar-AI/misarreach-sdks</url>
     </scm>
 
     <properties>

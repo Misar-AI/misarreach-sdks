@@ -14,12 +14,15 @@
   },
   "files": [
     "dist",
+    "!dist/__tests__",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "tsc && node --test \"dist/__tests__/**/*.test.js\""
   },
   "devDependencies": {
     "typescript": "^5.0.0"
@@ -29,13 +32,14 @@
   },
   "license": "MIT",
   "author": "Misar AI <support@misar.io>",
-  "homepage": "https://reach.misar.io/docs",
+  "homepage": "https://misarreach.com/docs",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/misaradmin/misarreach-sdk-js.git"
+    "url": "git+https://github.com/Misar-AI/misarreach-sdks.git",
+    "directory": "typescript"
   },
   "bugs": {
-    "url": "https://reach.misar.io/contact"
+    "url": "https://misarreach.com/contact"
   },
   "keywords": [
     "misarreach",

@@ -1,6 +1,6 @@
 # MisarReach PHP SDK
 
-Official PHP SDK for [MisarReach](https://reach.misar.io) — lead finder
+Official PHP SDK for [MisarReach](https://misarreach.com) — lead finder
 (23 sources), multi-channel outreach, and CRM (deals, pipeline, sales agents).
 
 Authenticates with a `mrk_` API key against `https://api.misar.io/reach/api`.

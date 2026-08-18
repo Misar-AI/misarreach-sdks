@@ -91,14 +91,18 @@ public sealed class MisarReachClient : IDisposable
             {
                 int status = (int)response.StatusCode;
 
-                if (RetryableStatuses.Contains(status) && attempt < _maxRetries - 1)
+                string responseBody = await response.Content
+                    .ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+                // A 429 rate limit and a 429 plan refusal are identical by
+                // status; only the first is worth retrying. The server's 503
+                // retry:true deliberately carries no upgrade flag.
+                if (RetryableStatuses.Contains(status) && attempt < _maxRetries - 1
+                    && !IsUpgradeRefusal(responseBody))
                 {
                     lastException = new MisarReachException(status, "retryable error");
                     continue;
                 }
-
-                string responseBody = await response.Content
-                    .ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -116,6 +120,35 @@ public sealed class MisarReachClient : IDisposable
     }
 
     /// <summary>Maps a non-2xx response into a typed <see cref="MisarReachException"/>.</summary>
+    /// <summary>
+    /// True when a body is a plan refusal rather than a rate limit. The
+    /// server's 503 <c>retry: true</c> deliberately carries no upgrade flag, so
+    /// "we could not check the quota" still retries.
+    /// </summary>
+    private static bool IsUpgradeRefusal(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("upgrade", out var u)
+                && u.ValueKind == JsonValueKind.True;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// The server returns upgrade_url app-relative (/settings?tab=billing);
+    /// resolve it against the app origin so callers can link to it.
+    /// </summary>
+    private static string? AbsoluteUpgradeUrl(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        if (path.StartsWith("http://") || path.StartsWith("https://")) return path;
+        return "https://misarreach.com" + (path.StartsWith("/") ? path : "/" + path);
+    }
+
     private static MisarReachException MapError(int status, string body)
     {
         string message = string.IsNullOrWhiteSpace(body) ? $"HTTP {status}" : body;
@@ -123,6 +156,8 @@ public sealed class MisarReachClient : IDisposable
         double? balance = null;
         int? freeRemaining = null;
         bool upgrade = false;
+        string? feature = null, upgradeUrl = null;
+        int? limit = null, current = null;
 
         try
         {
@@ -144,6 +179,14 @@ public sealed class MisarReachClient : IDisposable
                 if (root.TryGetProperty("upgrade", out var u) &&
                     (u.ValueKind == JsonValueKind.True || u.ValueKind == JsonValueKind.False))
                     upgrade = u.GetBoolean();
+                if (root.TryGetProperty("feature", out var ft) && ft.ValueKind == JsonValueKind.String)
+                    feature = ft.GetString();
+                if (root.TryGetProperty("limit", out var lm) && lm.ValueKind == JsonValueKind.Number)
+                    limit = lm.GetInt32();
+                if (root.TryGetProperty("current", out var cu) && cu.ValueKind == JsonValueKind.Number)
+                    current = cu.GetInt32();
+                if (root.TryGetProperty("upgrade_url", out var uu) && uu.ValueKind == JsonValueKind.String)
+                    upgradeUrl = AbsoluteUpgradeUrl(uu.GetString());
             }
         }
         catch { /* non-JSON body — keep raw message */ }
@@ -152,7 +195,10 @@ public sealed class MisarReachClient : IDisposable
         {
             401 or 403 => new AuthException(status, message),
             404 => new NotFoundException(message),
-            429 when upgrade => new UpgradeRequiredException(message),
+            // A counted cap answers 402 with upgrade:true. Only 429 was
+            // matched before, so real refusals became generic exceptions.
+            402 or 429 when upgrade =>
+                new UpgradeRequiredException(message, status, feature, limit, current, upgradeUrl),
             429 => new RateLimitException(message, balance, freeRemaining),
             _ => new MisarReachException(status, message, code),
         };
@@ -190,12 +236,21 @@ public sealed class MisarReachClient : IDisposable
         string? mediaType = response.Content.Headers.ContentType?.MediaType;
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
 
-        // Non-stream fallback: server returned a JSON snapshot.
+        // A job that has already finished is answered with a JSON snapshot
+        // rather than a stream. Report the terminal event the SSE path would have sent, rather than a name the server never uses,
+        // so a caller's switch works the same whether the job finished before
+        // or during the call.
         if (mediaType is not null && !mediaType.Contains("event-stream", StringComparison.OrdinalIgnoreCase))
         {
             using var sr = new StreamReader(stream);
             string snapshot = await sr.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-            await onEvent(new MisarReachStreamEvent("snapshot", ParseData(snapshot), snapshot)).ConfigureAwait(false);
+            JsonElement data = ParseData(snapshot);
+            bool failed = data.ValueKind == JsonValueKind.Object
+                && data.TryGetProperty("status", out var st)
+                && st.ValueKind == JsonValueKind.String
+                && st.GetString() == "failed";
+            await onEvent(new MisarReachStreamEvent(failed ? "error" : "complete", data, snapshot))
+                .ConfigureAwait(false);
             return;
         }
 
@@ -605,6 +660,19 @@ public sealed class MisarReachClient : IDisposable
     // =========================================================================
 
     /// <summary>GET /settings/sender-address</summary>
+    /// <summary>
+    /// <c>GET /plan</c> — the subscription behind the API key: plan, caps,
+    /// per-feature usage and the upgrade offer.
+    ///
+    /// Read this before an expensive run rather than discovering the ceiling
+    /// through an upgrade refusal halfway through: a 402 says a call *was*
+    /// refused, whereas usage says what is left before anything is spent. A null
+    /// limit means unlimited, and remaining is null with it rather than 0 — 0
+    /// would read as exhausted.
+    /// </summary>
+    public Task<JsonElement> Plan_GetAsync(CancellationToken ct = default) =>
+        RequestAsync(HttpMethod.Get, "/plan", cancellationToken: ct);
+
     public Task<JsonElement> Settings_SenderAddressAsync(CancellationToken ct = default) =>
         RequestAsync(HttpMethod.Get, "/settings/sender-address", cancellationToken: ct);
 

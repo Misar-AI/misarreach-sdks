@@ -26,6 +26,17 @@ RETRY_BASE_S = 0.2
 RETRYABLE = {429, 500, 502, 503, 504}
 
 
+def _terminal_event(snapshot: object) -> str:
+    """The event name a finished job's snapshot corresponds to.
+
+    Mirrors what the SSE path emits on completion, so callers do not need a
+    separate branch for a job that finished before the stream was opened.
+    """
+    if isinstance(snapshot, dict) and snapshot.get("status") == "failed":
+        return "error"
+    return "complete"
+
+
 def _clean(d: Optional[dict]) -> Optional[dict]:
     if d is None:
         return None
@@ -40,6 +51,15 @@ class SSEEvent:
     data: Any
 
 
+def _is_upgrade_refusal(resp) -> bool:
+    """True when the response is a plan refusal rather than a rate limit."""
+    try:
+        d = resp.json() if resp.content else {}
+    except ValueError:
+        return False
+    return isinstance(d, dict) and d.get("upgrade") is True
+
+
 def _raise_for_error(status: int, payload: dict) -> None:
     err = payload.get("error")
     msg = err if isinstance(err, str) else (payload.get("message") or "unknown error")
@@ -49,9 +69,21 @@ def _raise_for_error(status: int, payload: dict) -> None:
         raise ReachAuthError(msg, code or "unauthorized", error=err, status=status)
     if status == 404:
         raise ReachNotFoundError(msg, code or "not_found", error=err)
+    # A plan refusal arrives as 402 with `upgrade: true`. This used to be
+    # checked only under 429, so real refusals fell through to the generic
+    # error. 429 is still accepted in case an older deployment answers with it.
+    if payload.get("upgrade") is True and status in (402, 429):
+        raise ReachUpgradeRequiredError(
+            msg,
+            code or "upgrade_required",
+            status=status,
+            feature=payload.get("feature"),
+            limit=payload.get("limit"),
+            current=payload.get("current"),
+            upgrade_url=payload.get("upgrade_url"),
+            error=err,
+        )
     if status == 429:
-        if payload.get("upgrade"):
-            raise ReachUpgradeRequiredError(msg, code or "upgrade_required", error=err)
         raise ReachRateLimitError(msg, code or "rate_limit", retry_after=retry_after, error=err)
     raise ReachAPIError(status, msg, code, error=err, retry_after=retry_after)
 
@@ -89,7 +121,11 @@ class _ReachCore:
                     timeout=self._timeout,
                 )
                 status = resp.status_code
-                if status in RETRYABLE and attempt < self._max_retries - 1:
+                # Read the body before deciding: a rate-limit 429 and a plan
+                # refusal are told apart by `upgrade`, and only the first is
+                # worth retrying.
+                if status in RETRYABLE and attempt < self._max_retries - 1 \
+                        and not _is_upgrade_refusal(resp):
                     time.sleep(RETRY_BASE_S * (2**attempt))
                     continue
                 if not resp.is_success:
@@ -181,10 +217,14 @@ class _ReachCore:
                 resp.read()
                 data = resp.json() if resp.content else {}
                 _raise_for_error(resp.status_code, data if isinstance(data, dict) else {"error": str(data)})
-            # If the job is already finished the server returns a plain JSON snapshot.
+            # A job that has already finished is answered with a JSON snapshot
+            # rather than a stream. Report the terminal event the SSE path would
+            # have sent, so a caller's dispatch works the same whether the job
+            # finished before or during the call.
             if "text/event-stream" not in resp.headers.get("content-type", ""):
                 resp.read()
-                yield SSEEvent(event="complete", data=resp.json() if resp.content else {})
+                snapshot = resp.json() if resp.content else {}
+                yield SSEEvent(event=_terminal_event(snapshot), data=snapshot)
                 return
             buffer = ""
             for chunk in resp.iter_text():
@@ -209,7 +249,8 @@ class _ReachCore:
                     _raise_for_error(resp.status_code, data if isinstance(data, dict) else {"error": str(data)})
                 if "text/event-stream" not in resp.headers.get("content-type", ""):
                     await resp.aread()
-                    yield SSEEvent(event="complete", data=resp.json() if resp.content else {})
+                    snapshot = resp.json() if resp.content else {}
+                    yield SSEEvent(event=_terminal_event(snapshot), data=snapshot)
                     return
                 buffer = ""
                 async for chunk in resp.aiter_text():
@@ -469,6 +510,34 @@ class _DealsResource(_Resource):
         return await self._c._arequest("POST", "/deals/bulk", data)
 
 
+    def update(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """PATCH /deals/:id"""
+        return self._c._request("PATCH", f"/deals/{id}", data or {})
+
+    async def aupdate(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("PATCH", f"/deals/{id}", data or {})
+
+    def remove(self, id: str) -> dict[str, Any]:
+        """DELETE /deals/:id"""
+        return self._c._request("DELETE", f"/deals/{id}")
+
+    async def aremove(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("DELETE", f"/deals/{id}")
+
+    def activity(self, id: str) -> dict[str, Any]:
+        """GET /deals/:id/activity"""
+        return self._c._request("GET", f"/deals/{id}/activity")
+
+    async def aactivity(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/deals/{id}/activity")
+
+    def suggestions(self, id: str) -> dict[str, Any]:
+        """GET /deals/:id/suggestions"""
+        return self._c._request("GET", f"/deals/{id}/suggestions")
+
+    async def asuggestions(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/deals/{id}/suggestions")
+
 class _PipelineResource(_Resource):
     def get(self) -> Any:
         return self._c._request("GET", "/pipeline")
@@ -534,6 +603,55 @@ class _ChannelsResource(_Resource):
 
 # ── Autopilot ────────────────────────────────────────────────────────────────────
 
+    def connect_discord(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /channels/discord/connect"""
+        return self._c._request("POST", "/channels/discord/connect", data or {})
+
+    async def aconnect_discord(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/channels/discord/connect", data or {})
+
+    def connect_facebook(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /channels/facebook/connect"""
+        return self._c._request("POST", "/channels/facebook/connect", data or {})
+
+    async def aconnect_facebook(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/channels/facebook/connect", data or {})
+
+    def connect_instagram(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /channels/instagram/connect"""
+        return self._c._request("POST", "/channels/instagram/connect", data or {})
+
+    async def aconnect_instagram(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/channels/instagram/connect", data or {})
+
+    def connect_sms(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /channels/sms/connect"""
+        return self._c._request("POST", "/channels/sms/connect", data or {})
+
+    async def aconnect_sms(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/channels/sms/connect", data or {})
+
+    def connect_telegram(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /channels/telegram/connect"""
+        return self._c._request("POST", "/channels/telegram/connect", data or {})
+
+    async def aconnect_telegram(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/channels/telegram/connect", data or {})
+
+    def connect_twitter(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /channels/twitter/connect"""
+        return self._c._request("POST", "/channels/twitter/connect", data or {})
+
+    async def aconnect_twitter(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/channels/twitter/connect", data or {})
+
+    def connect_whatsapp(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /channels/whatsapp/connect"""
+        return self._c._request("POST", "/channels/whatsapp/connect", data or {})
+
+    async def aconnect_whatsapp(self, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", "/channels/whatsapp/connect", data or {})
+
 class _AutopilotResource(_Resource):
     def start(self, data: dict[str, Any]) -> Any:
         return self._c._request("POST", "/autopilot/start", data)
@@ -567,6 +685,27 @@ class _AutopilotResource(_Resource):
 
 
 # ── Sales Agent ──────────────────────────────────────────────────────────────────
+
+    def get(self, id: str) -> dict[str, Any]:
+        """GET /autopilot/:id"""
+        return self._c._request("GET", f"/autopilot/{id}")
+
+    async def aget(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/autopilot/{id}")
+
+    def status(self, id: str) -> dict[str, Any]:
+        """GET /autopilot/:id/status"""
+        return self._c._request("GET", f"/autopilot/{id}/status")
+
+    async def astatus(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/autopilot/{id}/status")
+
+    def set_status(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /autopilot/:id/status"""
+        return self._c._request("POST", f"/autopilot/{id}/status", data or {})
+
+    async def aset_status(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", f"/autopilot/{id}/status", data or {})
 
 class _SalesAgentResource(_Resource):
     def config(self) -> Any:
@@ -642,6 +781,34 @@ class _CampaignsResource(_Resource):
 
 # ── Contacts + Segments ──────────────────────────────────────────────────────────
 
+    def get(self, id: str) -> dict[str, Any]:
+        """GET /campaigns/:id"""
+        return self._c._request("GET", f"/campaigns/{id}")
+
+    async def aget(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/campaigns/{id}")
+
+    def update(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """PATCH /campaigns/:id"""
+        return self._c._request("PATCH", f"/campaigns/{id}", data or {})
+
+    async def aupdate(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("PATCH", f"/campaigns/{id}", data or {})
+
+    def remove(self, id: str) -> dict[str, Any]:
+        """DELETE /campaigns/:id"""
+        return self._c._request("DELETE", f"/campaigns/{id}")
+
+    async def aremove(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("DELETE", f"/campaigns/{id}")
+
+    def enqueue(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /campaigns/:id/enqueue"""
+        return self._c._request("POST", f"/campaigns/{id}/enqueue", data or {})
+
+    async def aenqueue(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", f"/campaigns/{id}/enqueue", data or {})
+
 class _ContactsResource(_Resource):
     def list(self, **params: Any) -> Any:
         return self._c._request("GET", "/contacts", params=params or None)
@@ -701,6 +868,27 @@ class _ContactsResource(_Resource):
 
 # ── Conversations ────────────────────────────────────────────────────────────────
 
+    def get(self, id: str) -> dict[str, Any]:
+        """GET /contacts/:id"""
+        return self._c._request("GET", f"/contacts/{id}")
+
+    async def aget(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/contacts/{id}")
+
+    def update(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """PATCH /contacts/:id"""
+        return self._c._request("PATCH", f"/contacts/{id}", data or {})
+
+    async def aupdate(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("PATCH", f"/contacts/{id}", data or {})
+
+    def remove(self, id: str) -> dict[str, Any]:
+        """DELETE /contacts/:id"""
+        return self._c._request("DELETE", f"/contacts/{id}")
+
+    async def aremove(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("DELETE", f"/contacts/{id}")
+
 class _ConversationsResource(_Resource):
     def list(
         self,
@@ -741,6 +929,20 @@ class _ConversationsResource(_Resource):
 
 # ── Campaign templates ───────────────────────────────────────────────────────────
 
+    def get(self, id: str) -> dict[str, Any]:
+        """GET /conversations/:id"""
+        return self._c._request("GET", f"/conversations/{id}")
+
+    async def aget(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/conversations/{id}")
+
+    def reply(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /conversations/:id/reply"""
+        return self._c._request("POST", f"/conversations/{id}/reply", data or {})
+
+    async def areply(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", f"/conversations/{id}/reply", data or {})
+
 class _CampaignTemplatesResource(_Resource):
     def list(self, category: Optional[str] = None) -> Any:
         return self._c._request("GET", "/campaign-templates", params={"category": category})
@@ -768,6 +970,22 @@ class _DeliverabilityResource(_Resource):
 
 
 # ── Notifications ────────────────────────────────────────────────────────────────
+
+class _PlanResource(_Resource):
+    """The subscription behind the API key.
+
+    Read this before an expensive run rather than discovering the ceiling
+    through an ``UpgradeRequiredError`` halfway through: a 402 says a call *was*
+    refused, whereas ``usage`` says what is left before anything is spent.
+
+    ``limit`` is None for an unlimited cap, and ``remaining`` is None with it
+    rather than 0 — 0 would read as exhausted.
+    """
+
+    def get(self) -> Any:
+        """``GET /plan`` — plan, caps, per-feature usage and the upgrade offer."""
+        return self._c._request("GET", "/plan")
+
 
 class _NotificationsResource(_Resource):
     def list(self, unread_only: Optional[bool] = None, limit: Optional[int] = None) -> Any:
@@ -860,6 +1078,27 @@ class _WorkspacesResource(_Resource):
 
 # ── Ads ──────────────────────────────────────────────────────────────────────────
 
+    def members(self, id: str) -> dict[str, Any]:
+        """GET /workspaces/:id/members"""
+        return self._c._request("GET", f"/workspaces/{id}/members")
+
+    async def amembers(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/workspaces/{id}/members")
+
+    def add_member(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /workspaces/:id/members"""
+        return self._c._request("POST", f"/workspaces/{id}/members", data or {})
+
+    async def aadd_member(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", f"/workspaces/{id}/members", data or {})
+
+    def remove_member(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """DELETE /workspaces/:id/members"""
+        return self._c._request("DELETE", f"/workspaces/{id}/members", data or {})
+
+    async def aremove_member(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("DELETE", f"/workspaces/{id}/members", data or {})
+
 class _AdsResource(_Resource):
     def linkedin_company_audience(self, data: dict[str, Any]) -> Any:
         return self._c._request("POST", "/ads/linkedin/company-audience", data)
@@ -869,6 +1108,65 @@ class _AdsResource(_Resource):
 
 
 # ── Main Client ──────────────────────────────────────────────────────────────────
+
+class _LeadFinderResource(_Resource):
+    """leadFinder — generated from scripts/sdk-endpoint-spec.json."""
+
+    def company(self, id: str) -> dict[str, Any]:
+        """GET /lead-finder/companies/:id"""
+        return self._c._request("GET", f"/lead-finder/companies/{id}")
+
+    async def acompany(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/lead-finder/companies/{id}")
+
+    def company_people(self, id: str) -> dict[str, Any]:
+        """GET /lead-finder/companies/:id/people"""
+        return self._c._request("GET", f"/lead-finder/companies/{id}/people")
+
+    async def acompany_people(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/lead-finder/companies/{id}/people")
+
+    def job(self, id: str) -> dict[str, Any]:
+        """GET /lead-finder/jobs/:id"""
+        return self._c._request("GET", f"/lead-finder/jobs/{id}")
+
+    async def ajob(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("GET", f"/lead-finder/jobs/{id}")
+
+    def job_feedback(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /lead-finder/jobs/:id/feedback"""
+        return self._c._request("POST", f"/lead-finder/jobs/{id}/feedback", data or {})
+
+    async def ajob_feedback(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", f"/lead-finder/jobs/{id}/feedback", data or {})
+
+    def sync_list(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """POST /lead-finder/lists/:id/sync"""
+        return self._c._request("POST", f"/lead-finder/lists/{id}/sync", data or {})
+
+    async def async_list(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("POST", f"/lead-finder/lists/{id}/sync", data or {})
+
+    def remove_saved_search(self, id: str) -> dict[str, Any]:
+        """DELETE /lead-finder/saved-searches/:id"""
+        return self._c._request("DELETE", f"/lead-finder/saved-searches/{id}")
+
+    async def aremove_saved_search(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("DELETE", f"/lead-finder/saved-searches/{id}")
+
+    def update_scoring_rule(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """PATCH /lead-finder/scoring-rules/:id"""
+        return self._c._request("PATCH", f"/lead-finder/scoring-rules/{id}", data or {})
+
+    async def aupdate_scoring_rule(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return await self._c._arequest("PATCH", f"/lead-finder/scoring-rules/{id}", data or {})
+
+    def remove_scoring_rule(self, id: str) -> dict[str, Any]:
+        """DELETE /lead-finder/scoring-rules/:id"""
+        return self._c._request("DELETE", f"/lead-finder/scoring-rules/{id}")
+
+    async def aremove_scoring_rule(self, id: str) -> dict[str, Any]:
+        return await self._c._arequest("DELETE", f"/lead-finder/scoring-rules/{id}")
 
 class MisarReachClient(_ReachCore):
     """
@@ -917,7 +1215,9 @@ class MisarReachClient(_ReachCore):
         self.settings = _SettingsResource(self)
         self.workspaces = _WorkspacesResource(self)
         self.ads = _AdsResource(self)
+        self.lead_finder = _LeadFinderResource(self)
         self.campaign_templates = _CampaignTemplatesResource(self)
         self.deliverability = _DeliverabilityResource(self)
         self.notifications = _NotificationsResource(self)
+        self.plan = _PlanResource(self)
         self.webhooks = _WebhooksResource(self)

@@ -9,6 +9,7 @@ use MisarReach\AuthError;
 use MisarReach\Client;
 use MisarReach\NotFoundError;
 use MisarReach\RateLimitError;
+use MisarReach\UpgradeRequiredError;
 use PHPUnit\Framework\TestCase;
 
 class ClientTest extends TestCase
@@ -147,18 +148,34 @@ class ClientTest extends TestCase
         }
     }
 
-    public function testError429UpgradeSetsFlag(): void
+    public function testUpgradeRefusalOn429IsTypedAsARefusal(): void
     {
+        // A body carrying `upgrade: true` is a plan refusal whatever the status.
+        // 402 is what the server sends now; 429 is still accepted so an older
+        // deployment is not mistaken for a plain rate limit, which a caller
+        // would retry pointlessly.
         $client = $this->makeClient([
-            ['status' => 429, 'body' => ['error' => 'upgrade required', 'upgrade' => true]],
+            ['status' => 429, 'body' => [
+                'error'       => 'monthly lead searches used up',
+                'upgrade'     => true,
+                'feature'     => 'lead_searches',
+                'limit'       => 50,
+                'current'     => 50,
+                'upgrade_url' => '/settings?tab=billing',
+            ]],
         ]);
 
         try {
             $client->leads->score(['jobId' => 'j1']);
-            $this->fail('Expected RateLimitError');
-        } catch (RateLimitError $e) {
-            $this->assertTrue($e->upgrade);
-            $this->assertSame('upgrade_required', $e->code);
+            $this->fail('Expected UpgradeRequiredError');
+        } catch (UpgradeRequiredError $e) {
+            $this->assertSame(429, $e->status);
+            $this->assertSame('upgrade_required', $e->errorCode);
+            $this->assertSame('lead_searches', $e->feature);
+            $this->assertSame(50, $e->limit);
+            $this->assertSame(50, $e->current);
+            // The server sends it app-relative; the SDK resolves it.
+            $this->assertSame('https://misarreach.com/settings?tab=billing', $e->upgradeUrl);
         }
     }
 

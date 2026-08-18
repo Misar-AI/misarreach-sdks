@@ -2,6 +2,26 @@ import Foundation
 
 #if canImport(FoundationNetworking)
 import FoundationNetworking
+
+/// swift-corelibs-foundation has no async `data(for:)` or `bytes(for:)`, so the
+/// client would not build on Linux. Bridging the completion-handler API keeps
+/// the SDK one implementation on every platform instead of two behind `#if`.
+extension URLSession {
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
+            let task = dataTask(with: request) { data, response, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let data, let response {
+                    continuation.resume(returning: (data, response))
+                } else {
+                    continuation.resume(throwing: URLError(.badServerResponse))
+                }
+            }
+            task.resume()
+        }
+    }
+}
 #endif
 
 // MARK: - Client
@@ -101,6 +121,17 @@ public final class MisarReachClient {
     }
 
     /// Maps a non-2xx response into a typed ``MisarReachError``.
+    /// Percent-encodes a value for use as a single path segment.
+    ///
+    /// `.urlPathAllowed` is for an entire path and permits `/`, `@`, `+` and
+    /// `&`, so a value containing one would change the shape of the URL rather
+    /// than being carried inside a segment. Only unreserved characters are kept.
+    internal static func encodeSegment(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
     internal static func mapError(status: Int, data: Data) -> MisarReachError {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
         let message = (obj["error"] as? String)
@@ -108,10 +139,26 @@ public final class MisarReachClient {
             ?? (String(data: data, encoding: .utf8).flatMap { $0.isEmpty ? nil : $0 })
             ?? "error"
 
+        // A counted cap answers 402 with upgrade:true; older deployments used
+        // 429. Either way it is a plan refusal, not a rate limit. This check has
+        // to sit above the 429 branch: nested inside it, the `status == 402`
+        // clause was unreachable and every real 402 refusal fell through to a
+        // generic apiError.
+        let upgrade = (obj["upgrade"] as? Bool) ?? false
+        if upgrade, status == 402 || status == 429 {
+            return .upgradeRequired(
+                status: status,
+                message: message,
+                feature: obj["feature"] as? String,
+                limit: (obj["limit"] as? NSNumber)?.intValue,
+                current: (obj["current"] as? NSNumber)?.intValue,
+                upgradeURL: Self.absoluteUpgradeURL(obj["upgrade_url"] as? String)
+            )
+        }
+
         if status == 429 {
             let balance = (obj["balance"] as? NSNumber)?.doubleValue ?? (obj["balance"] as? Double)
             let freeRemaining = (obj["freeRemaining"] as? NSNumber)?.intValue ?? (obj["freeRemaining"] as? Int)
-            let upgrade = (obj["upgrade"] as? Bool) ?? false
             return .rateLimit(message: message, balance: balance, freeRemaining: freeRemaining, upgrade: upgrade)
         }
 
@@ -125,6 +172,14 @@ public final class MisarReachClient {
     /// until the stream terminates. If the endpoint returns a plain JSON
     /// snapshot (job already finished), a single synthetic `snapshot` event is
     /// delivered instead.
+    /// Opens the SSE stream and invokes `onEvent` per frame.
+    ///
+    /// The delegate hands over raw chunks rather than lines, because
+    /// `URLSession.bytes(for:)` does not exist in swift-corelibs-foundation.
+    /// Frames are therefore found by buffering and splitting on the blank line.
+    ///
+    /// Deliberately not retried: replaying a stream that failed mid-flight would
+    /// duplicate whatever the caller already consumed.
     internal func stream(
         path: String,
         onEvent: @escaping (MisarReachStreamEvent) -> Void
@@ -138,87 +193,108 @@ public final class MisarReachClient {
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
-        let (bytes, response): (URLSession.AsyncBytes, URLResponse)
-        do {
-            (bytes, response) = try await session.bytes(for: urlRequest)
-        } catch {
-            throw MisarReachError.networkError(message: error.localizedDescription)
-        }
+        let state = ReachSSEState()
 
-        guard let http = response as? HTTPURLResponse else {
-            throw MisarReachError.networkError(message: "Non-HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            var buffer = Data()
-            for try await byte in bytes { buffer.append(byte) }
-            throw Self.mapError(status: http.statusCode, data: buffer)
-        }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // Parsing state is confined to this serial queue, so the delegate
+            // callbacks never race with each other.
+            let queue = OperationQueue()
+            queue.maxConcurrentOperationCount = 1
 
-        // Non-stream fallback: server returned a JSON snapshot.
-        let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
-        if !contentType.contains("text/event-stream") {
-            var buffer = Data()
-            for try await byte in bytes { buffer.append(byte) }
-            let obj = (try? JSONSerialization.jsonObject(with: buffer)) as? [String: Any] ?? [:]
-            onEvent(MisarReachStreamEvent(
-                event: "snapshot",
-                data: obj,
-                raw: String(data: buffer, encoding: .utf8) ?? ""
-            ))
-            return
-        }
+            let delegate = ReachSSEChunkDelegate(
+                onResponse: { http in
+                    state.status = http.statusCode
+                    state.isStream = (http.value(forHTTPHeaderField: "Content-Type") ?? "")
+                        .lowercased()
+                        .contains("text/event-stream")
+                },
+                onChunk: { chunk in
+                    // A refusal body, or a finished job's snapshot, is JSON
+                    // rather than SSE: collect it and handle it at completion.
+                    guard (200..<300).contains(state.status), state.isStream else {
+                        state.wholeBody.append(chunk)
+                        return
+                    }
+                    state.buffer.append(chunk)
+                    while let frame = state.nextFrame() {
+                        if let event = state.parse(frame) { onEvent(event) }
+                    }
+                },
+                onComplete: { error in
+                    guard !state.finished else { return }
+                    state.finished = true
 
-        var eventName = "message"
-        var dataLines: [String] = []
+                    if let error {
+                        continuation.resume(
+                            throwing: MisarReachError.networkError(message: error.localizedDescription)
+                        )
+                        return
+                    }
+                    if state.status >= 400 {
+                        continuation.resume(
+                            throwing: MisarReachClient.mapError(status: state.status, data: state.wholeBody)
+                        )
+                        return
+                    }
+                    // A job that has already finished is answered with a JSON
+                    // snapshot rather than a stream. Report the terminal event
+                    // the SSE path would have sent, so a caller's switch works
+                    // the same whether the job finished before or during the call.
+                    if !state.isStream {
+                        let obj = (try? JSONSerialization.jsonObject(with: state.wholeBody))
+                            as? [String: Any] ?? [:]
+                        onEvent(MisarReachStreamEvent(
+                            event: obj["status"] as? String == "failed" ? "error" : "complete",
+                            data: obj,
+                            raw: String(data: state.wholeBody, encoding: .utf8) ?? ""
+                        ))
+                        continuation.resume()
+                        return
+                    }
+                    // A trailing frame the server never closed with a blank line.
+                    if let event = state.parse(state.drain()) { onEvent(event) }
+                    continuation.resume()
+                }
+            )
 
-        func dispatch() {
-            guard !dataLines.isEmpty else { eventName = "message"; return }
-            let raw = dataLines.joined(separator: "\n")
-            let obj = raw.data(using: .utf8)
-                .flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
-            onEvent(MisarReachStreamEvent(event: eventName, data: obj, raw: raw))
-            eventName = "message"
-            dataLines = []
+            // The client's own configuration, not a fresh .default: it carries
+            // the caller's timeouts, proxy settings and protocolClasses, so an
+            // injected session's behaviour applies to streams too.
+            let streamSession = URLSession(
+                configuration: session.configuration,
+                delegate: delegate,
+                delegateQueue: queue
+            )
+            let task = streamSession.dataTask(with: urlRequest)
+            task.resume()
         }
-
-        for try await line in bytes.lines {
-            if line.isEmpty {
-                dispatch()
-            } else if line.hasPrefix(":") {
-                continue // comment / heartbeat
-            } else if line.hasPrefix("event:") {
-                eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-            } else if line.hasPrefix("data:") {
-                dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
-            }
-        }
-        dispatch()
     }
 
     // MARK: - Resource accessors
 
-    public lazy var leads         = LeadsResource(client: self)
-    public lazy var ads           = AdsResource(client: self)
-    public lazy var autopilot     = AutopilotResource(client: self)
-    public lazy var campaigns     = CampaignsResource(client: self)
-    public lazy var channels      = ChannelsResource(client: self)
-    public lazy var contacts      = ContactsResource(client: self)
-    public lazy var conversations = ConversationsResource(client: self)
-    public lazy var deals         = DealsResource(client: self)
-    public lazy var pipeline      = PipelineResource(client: self)
-    public lazy var salesAgent    = SalesAgentResource(client: self)
-    public lazy var settings      = SettingsResource(client: self)
-    public lazy var workspaces    = WorkspacesResource(client: self)
-    public lazy var campaignTemplates = CampaignTemplatesResource(client: self)
-    public lazy var deliverability    = DeliverabilityResource(client: self)
-    public lazy var notifications     = NotificationsResource(client: self)
-    public lazy var webhooks          = WebhooksResource(client: self)
+    public var leads:         LeadsResource { LeadsResource(client: self) }
+    public var ads:           AdsResource { AdsResource(client: self) }
+    public var autopilot:     AutopilotResource { AutopilotResource(client: self) }
+    public var campaigns:     CampaignsResource { CampaignsResource(client: self) }
+    public var channels:      ChannelsResource { ChannelsResource(client: self) }
+    public var contacts:      ContactsResource { ContactsResource(client: self) }
+    public var conversations: ConversationsResource { ConversationsResource(client: self) }
+    public var deals:         DealsResource { DealsResource(client: self) }
+    public var pipeline:      PipelineResource { PipelineResource(client: self) }
+    public var salesAgent:    SalesAgentResource { SalesAgentResource(client: self) }
+    public var settings:      SettingsResource { SettingsResource(client: self) }
+    public var plan:      PlanResource { PlanResource(client: self) }
+    public var workspaces:    WorkspacesResource { WorkspacesResource(client: self) }
+    public var campaignTemplates: CampaignTemplatesResource { CampaignTemplatesResource(client: self) }
+    public var deliverability:    DeliverabilityResource { DeliverabilityResource(client: self) }
+    public var notifications:     NotificationsResource { NotificationsResource(client: self) }
+    public var webhooks:          WebhooksResource { WebhooksResource(client: self) }
 }
 
 // MARK: - LeadsResource (lead-finder)
 
 public class LeadsResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /lead-finder/account
@@ -378,7 +454,7 @@ public class LeadsResource {
 // MARK: - AdsResource
 
 public class AdsResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// POST /ads/linkedin/company-audience
@@ -390,7 +466,7 @@ public class AdsResource {
 // MARK: - AutopilotResource
 
 public class AutopilotResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /autopilot/runs
@@ -423,7 +499,7 @@ public class AutopilotResource {
 // MARK: - CampaignsResource
 
 public class CampaignsResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /campaigns
@@ -461,7 +537,7 @@ public class CampaignsResource {
 // MARK: - ChannelsResource
 
 public class ChannelsResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /channels/status
@@ -529,7 +605,7 @@ public class ChannelsResource {
 // MARK: - ContactsResource
 
 public class ContactsResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /contacts
@@ -582,7 +658,7 @@ public class ContactsResource {
 // MARK: - ConversationsResource
 
 public class ConversationsResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /conversations
@@ -593,13 +669,13 @@ public class ConversationsResource {
 
     /// GET /conversations/{email}
     public func get(email: String) async throws -> [String: Any] {
-        let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? email
+        let encoded = MisarReachClient.encodeSegment(email)
         return try await client.request(method: "GET", path: "/conversations/\(encoded)")
     }
 
     /// POST /conversations/{email}/reply
     public func reply(email: String, data: [String: Any]) async throws -> [String: Any] {
-        let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? email
+        let encoded = MisarReachClient.encodeSegment(email)
         return try await client.request(method: "POST", path: "/conversations/\(encoded)/reply", body: data)
     }
 }
@@ -607,7 +683,7 @@ public class ConversationsResource {
 // MARK: - CampaignTemplatesResource
 
 public class CampaignTemplatesResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /campaign-templates
@@ -625,7 +701,7 @@ public class CampaignTemplatesResource {
 // MARK: - DeliverabilityResource
 
 public class DeliverabilityResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /deliverability
@@ -641,7 +717,7 @@ public class DeliverabilityResource {
 // MARK: - NotificationsResource
 
 public class NotificationsResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /notifications
@@ -659,7 +735,7 @@ public class NotificationsResource {
 // MARK: - WebhooksResource
 
 public class WebhooksResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /webhooks/endpoints
@@ -679,7 +755,7 @@ public class WebhooksResource {
 // MARK: - DealsResource
 
 public class DealsResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /deals
@@ -724,7 +800,7 @@ public class DealsResource {
 // MARK: - PipelineResource
 
 public class PipelineResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /pipeline
@@ -741,7 +817,7 @@ public class PipelineResource {
 // MARK: - SalesAgentResource
 
 public class SalesAgentResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /sales-agent/actions
@@ -775,7 +851,7 @@ public class SalesAgentResource {
 // MARK: - SettingsResource
 
 public class SettingsResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /settings/sender-address
@@ -792,7 +868,7 @@ public class SettingsResource {
 // MARK: - WorkspacesResource
 
 public class WorkspacesResource {
-    private unowned let client: MisarReachClient
+    private let client: MisarReachClient
     init(client: MisarReachClient) { self.client = client }
 
     /// GET /workspaces
@@ -819,5 +895,141 @@ public class WorkspacesResource {
     public func removeMember(id: String, params: String? = nil) async throws -> [String: Any] {
         let path = params.map { "/workspaces/\(id)/members?\($0)" } ?? "/workspaces/\(id)/members"
         return try await client.request(method: "DELETE", path: path)
+    }
+}
+
+extension MisarReachClient {
+    /// The server returns `upgrade_url` app-relative (`/settings?tab=billing`);
+    /// resolve it against the app origin so callers can link to it.
+    static func absoluteUpgradeURL(_ path: String?) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        if path.hasPrefix("http://") || path.hasPrefix("https://") { return path }
+        return "https://misarreach.com" + (path.hasPrefix("/") ? path : "/" + path)
+    }
+}
+
+// MARK: - SSE transport
+
+/// Bridges `URLSession`'s delegate callbacks into chunk callbacks.
+///
+/// A data delegate is available on every platform, unlike
+/// `URLSession.bytes(for:)`, so this keeps one implementation rather than two.
+final class ReachSSEChunkDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let onResponse: (HTTPURLResponse) -> Void
+    private let onChunk: (Data) -> Void
+    private let onComplete: (Error?) -> Void
+
+    init(
+        onResponse: @escaping (HTTPURLResponse) -> Void,
+        onChunk: @escaping (Data) -> Void,
+        onComplete: @escaping (Error?) -> Void
+    ) {
+        self.onResponse = onResponse
+        self.onChunk = onChunk
+        self.onComplete = onComplete
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        if let http = response as? HTTPURLResponse { onResponse(http) }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        onChunk(data)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        onComplete(error)
+        // Invalidation must not run on the session's own delegate queue — it
+        // waits for that queue to drain, and this callback runs on it.
+        DispatchQueue.global().async { session.finishTasksAndInvalidate() }
+    }
+}
+
+/// Mutable SSE parse state, owned by the delegate's serial queue.
+final class ReachSSEState: @unchecked Sendable {
+    var status = 0
+    var isStream = false
+    var finished = false
+    var buffer = Data()
+    /// A non-SSE body: either a refusal envelope or a finished job's snapshot.
+    var wholeBody = Data()
+
+    /// Pops the next complete frame, or nil when the buffer holds a partial one.
+    func nextFrame() -> String? {
+        let lf = buffer.range(of: Data("\n\n".utf8))
+        let crlf = buffer.range(of: Data("\r\n\r\n".utf8))
+
+        let chosen: Range<Data.Index>?
+        switch (lf, crlf) {
+        case (nil, nil):       chosen = nil
+        case (let l?, nil):    chosen = l
+        case (nil, let c?):    chosen = c
+        case (let l?, let c?): chosen = l.lowerBound <= c.lowerBound ? l : c
+        }
+        guard let range = chosen else { return nil }
+
+        let frame = String(data: buffer[buffer.startIndex..<range.lowerBound], encoding: .utf8) ?? ""
+        buffer.removeSubrange(buffer.startIndex..<range.upperBound)
+        return frame
+    }
+
+    /// Whatever is left once the socket closes.
+    func drain() -> String {
+        let rest = String(data: buffer, encoding: .utf8) ?? ""
+        buffer.removeAll()
+        return rest
+    }
+
+    /// Parses one frame, or nil for a keepalive comment or a frame with no data.
+    func parse(_ frame: String) -> MisarReachStreamEvent? {
+        var eventName = "message"
+        var dataLines: [String] = []
+
+        for rawLine in frame.replacingOccurrences(of: "\r\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            if line.isEmpty || line.hasPrefix(":") { continue }  // blank or keepalive
+            if line.hasPrefix("event:") {
+                eventName = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("data:") {
+                var rest = String(line.dropFirst(5))
+                // SSE strips exactly one space after the colon.
+                if rest.hasPrefix(" ") { rest.removeFirst() }
+                dataLines.append(rest)
+            }
+        }
+
+        guard !dataLines.isEmpty else { return nil }
+
+        let raw = dataLines.joined(separator: "\n")
+        let obj = raw.data(using: .utf8)
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any] ?? [:]
+        return MisarReachStreamEvent(event: eventName, data: obj, raw: raw)
+    }
+}
+
+// MARK: - PlanResource
+
+/// The subscription behind the API key.
+///
+/// Read this before an expensive run rather than discovering the ceiling through
+/// `MisarReachError.upgradeRequired` halfway through: a 402 says a call *was*
+/// refused, whereas `usage` says what is left before anything is spent.
+public final class PlanResource {
+    private let client: MisarReachClient
+    init(client: MisarReachClient) { self.client = client }
+
+    /// `GET /plan` — plan, caps, per-feature usage and the upgrade offer.
+    ///
+    /// A null limit means unlimited, and `remaining` is null with it rather than
+    /// 0 — 0 would read as exhausted.
+    public func get() async throws -> [String: Any] {
+        try await client.request(method: "GET", path: "/plan")
     }
 }

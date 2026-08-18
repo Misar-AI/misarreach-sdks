@@ -38,9 +38,43 @@ module MisarReach
   end
 
   # 429 with `upgrade: true` — the workspace plan must be upgraded to proceed.
+  # A counted plan cap was hit.
+  #
+  # MisarReach answers 402 with +upgrade: true+ when a cap is reached and names
+  # the offending counter. Retrying cannot help until the cap resets or the
+  # plan changes.
+  #
+  # Distinct from the 503 +retry: true+ the server sends when it could not
+  # *check* the quota: that one is retried, so "we do not know" is never
+  # mistaken for "you are over your limit".
   class UpgradeRequiredError < ApiError
+    APP_ORIGIN = "https://misarreach.com".freeze
+
+    # @return [String, nil] the counter that was exhausted, e.g. "lead_searches"
+    attr_reader :feature
+    # @return [Integer, nil] the cap on the current plan
+    attr_reader :limit
+    # @return [Integer, nil] usage against that cap when the call was refused
+    attr_reader :current
+    # @return [String, nil] absolute URL to the billing page
+    attr_reader :upgrade_url
+
     def initialize(message = "Upgrade required", **opts)
-      super(429, message, code: opts[:code] || "upgrade_required", **opts.reject { |k, _| k == :code })
+      body       = opts[:body] || {}
+      @feature   = body["feature"]
+      @limit     = body["limit"]
+      @current   = body["current"]
+      # The server sends an app-relative path; make it linkable.
+      url = body["upgrade_url"]
+      @upgrade_url =
+        if url.nil? || url.start_with?("http://", "https://")
+          url
+        else
+          APP_ORIGIN + (url.start_with?("/") ? url : "/#{url}")
+        end
+      super(opts[:status] || 402, message,
+            code: opts[:code] || "upgrade_required",
+            **opts.reject { |k, _| %i[code status].include?(k) })
     end
   end
 

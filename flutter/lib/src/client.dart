@@ -56,6 +56,7 @@ class MisarReachClient {
   late final ConversationsResource conversations;
   late final WorkspacesResource workspaces;
   late final SettingsResource settings;
+  late final PlanResource plan;
   late final AdsResource ads;
   late final CampaignTemplatesResource campaignTemplates;
   late final DeliverabilityResource deliverability;
@@ -83,6 +84,7 @@ class MisarReachClient {
     conversations = ConversationsResource(this);
     workspaces = WorkspacesResource(this);
     settings = SettingsResource(this);
+    plan = PlanResource(this);
     ads = AdsResource(this);
     campaignTemplates = CampaignTemplatesResource(this);
     deliverability = DeliverabilityResource(this);
@@ -226,6 +228,23 @@ class MisarReachClient {
       throw _errorFor(response.statusCode, raw);
     }
 
+    // The route does not always stream. A job that has already finished is
+    // answered with a JSON snapshot, because there is nothing left to stream.
+    // Parsing that as SSE finds no frames and completes silently, so the caller
+    // would see nothing rather than the outcome. Synthesise the terminal frame
+    // the SSE path would have sent, so both answers look the same.
+    final contentType = response.headers['content-type'] ?? '';
+    if (!contentType.contains('text/event-stream')) {
+      final body = await response.stream.bytesToString();
+      dynamic snapshot = body;
+      try {
+        snapshot = jsonDecode(body);
+      } catch (_) {/* keep the raw string */}
+      final status = snapshot is Map ? snapshot['status'] : null;
+      yield ReachSseEvent(status == 'failed' ? 'error' : 'complete', snapshot);
+      return;
+    }
+
     final lines = response.stream
         .transform(utf8.decoder)
         .transform(const LineSplitter());
@@ -296,6 +315,10 @@ class MisarReachClient {
         return MisarReachAuthException(status, message, body: h);
       case 404:
         return MisarReachNotFoundException(message, body: h);
+      // A counted cap answers 402 with `upgrade: true`. Only 429 was checked
+      // before, so every real refusal became a generic error.
+      case 402:
+        return MisarReachUpgradeRequiredException(message, body: h);
       case 429:
         if (h['upgrade'] == true) {
           return MisarReachUpgradeRequiredException(message, body: h);
@@ -622,4 +645,19 @@ class AdsResource extends _Resource {
   Future<Map<String, dynamic>> linkedinCompanyAudience(
           Map<String, dynamic> data) =>
       _client._request('POST', '/ads/linkedin/company-audience', body: data);
+}
+
+/// The subscription behind the API key.
+///
+/// Read this before an expensive run rather than discovering the ceiling through
+/// a refusal halfway through: a 402 says a call *was* refused, whereas [usage]
+/// says what is left before anything is spent.
+class PlanResource extends _Resource {
+  const PlanResource(super.client);
+
+  /// `GET /plan` — plan, caps, per-feature usage and the upgrade offer.
+  ///
+  /// A null limit means unlimited, and `remaining` is null with it rather than
+  /// 0 — 0 would read as exhausted.
+  Future<Map<String, dynamic>> get() => _client._request('GET', '/plan');
 }

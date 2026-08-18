@@ -1,6 +1,10 @@
 import XCTest
 @testable import MisarReach
 
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 // MARK: - URLSession stub
 
 /// A `URLProtocol` subclass that intercepts requests and responds with a
@@ -10,6 +14,18 @@ final class StubURLProtocol: URLProtocol {
     static var statusCode: Int = 200
     static var responseBody: Data = Data()
     static var lastRequest: URLRequest?
+    static var contentType: String = "application/json"
+    /// Delivered in order, one `didLoad:` per element, so a frame boundary can
+    /// land mid-chunk. Falls back to `responseBody` when empty.
+    static var pieces: [String] = []
+
+    static func reset() {
+        statusCode = 200
+        responseBody = Data()
+        lastRequest = nil
+        contentType = "application/json"
+        pieces = []
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -20,10 +36,16 @@ final class StubURLProtocol: URLProtocol {
             url: request.url!,
             statusCode: StubURLProtocol.statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: ["Content-Type": StubURLProtocol.contentType]
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: StubURLProtocol.responseBody)
+        if StubURLProtocol.pieces.isEmpty {
+            client?.urlProtocol(self, didLoad: StubURLProtocol.responseBody)
+        } else {
+            for piece in StubURLProtocol.pieces {
+                client?.urlProtocol(self, didLoad: Data(piece.utf8))
+            }
+        }
         client?.urlProtocolDidFinishLoading(self)
     }
 
@@ -40,9 +62,23 @@ extension MisarReachClientTests {
         return URLSession(configuration: config)
     }
 
-    func stub(status: Int, body: String) -> MisarReachClient {
+    func stub(status: Int, body: String, contentType: String = "application/json") -> MisarReachClient {
+        StubURLProtocol.reset()
         StubURLProtocol.statusCode = status
         StubURLProtocol.responseBody = Data(body.utf8)
+        StubURLProtocol.contentType = contentType
+        return MisarReachClient(
+            apiKey: "mrk_test_key",
+            maxRetries: 1,
+            session: Self.makeSession()
+        )
+    }
+
+    /// Streams the given pieces as one `text/event-stream` body.
+    func stubStream(pieces: [String]) -> MisarReachClient {
+        StubURLProtocol.reset()
+        StubURLProtocol.contentType = "text/event-stream"
+        StubURLProtocol.pieces = pieces
         return MisarReachClient(
             apiKey: "mrk_test_key",
             maxRetries: 1,
@@ -124,13 +160,25 @@ final class MisarReachClientTests: XCTestCase {
         }
     }
 
-    func test429_upgrade_setsFlag() async throws {
-        let client = stub(status: 429, body: #"{"error":"upgrade","upgrade":true}"#)
+    func testUpgradeRefusalOn429IsTypedAsARefusal() async throws {
+        // A body carrying `upgrade: true` is a plan refusal whatever the status.
+        // 402 is what the server sends now; 429 is still accepted so an older
+        // deployment is not mistaken for a plain rate limit, which a caller
+        // would retry pointlessly.
+        let client = stub(
+            status: 429,
+            body: #"{"error":"monthly lead searches used up","upgrade":true,"feature":"lead_searches"}"#
+        )
+
         do {
             _ = try await client.leads.score(["jobId": "j1"])
-            XCTFail("Expected rateLimit error")
-        } catch MisarReachError.rateLimit(_, _, _, let upgrade) {
-            XCTAssertTrue(upgrade)
+            XCTFail("expected a refusal")
+        } catch let error as MisarReachError {
+            guard case .upgradeRequired(let status, _, let feature, _, _, _) = error else {
+                return XCTFail("expected upgradeRequired, got \(error)")
+            }
+            XCTAssertEqual(status, 429)
+            XCTAssertEqual(feature, "lead_searches")
         }
     }
 
@@ -144,5 +192,84 @@ final class MisarReachClientTests: XCTestCase {
         let client = stub(status: 200, body: #"{"messages":[]}"#)
         _ = try await client.conversations.get(email: "jane@acme.com")
         XCTAssertTrue(StubURLProtocol.lastRequest?.url?.absoluteString.contains("jane%40acme.com") ?? false)
+    }
+
+    // MARK: - Server-Sent Events
+
+    func testJobStreamEmitsEachNamedFrame() async throws {
+        // MisarReach names its events and sends `: keepalive` every 20s. The
+        // boundary between the first two frames is split across two chunks.
+        let client = stubStream(pieces: [
+            "event: progress\ndata: {\"message\":\"searching\"}\n",
+            "\n: keepalive\n\n",
+            "event: found\ndata: {\"total\":12}\n\n",
+            "event: complete\ndata: {\"total_found\":12}\n\n",
+        ])
+
+        var seen: [MisarReachStreamEvent] = []
+        try await client.leads.streamJob(jobId: "job_1") { seen.append($0) }
+
+        // The keepalive comment must not surface as an event.
+        XCTAssertEqual(seen.map(\.event), ["progress", "found", "complete"])
+        XCTAssertEqual(seen[1].data["total"] as? Int, 12)
+    }
+
+    func testJobStreamReportsAnAlreadyFinishedJob() async throws {
+        // A finished job is answered with a JSON snapshot rather than a stream.
+        // Parsed as SSE this emits nothing, so the caller could not tell a
+        // finished job from a silent one.
+        let client = stub(
+            status: 200,
+            body: #"{"status":"done","total_found":42,"error":null}"#,
+            contentType: "application/json"
+        )
+
+        var seen: [MisarReachStreamEvent] = []
+        try await client.leads.streamJob(jobId: "job_done") { seen.append($0) }
+
+        XCTAssertEqual(seen.count, 1)
+        XCTAssertEqual(seen.first?.event, "complete")
+        XCTAssertEqual(seen.first?.data["total_found"] as? Int, 42)
+    }
+
+    func testJobStreamReportsAFailedJobAsError() async throws {
+        let client = stub(
+            status: 200,
+            body: #"{"status":"failed","error":"no sources reachable"}"#,
+            contentType: "application/json"
+        )
+
+        var seen: [MisarReachStreamEvent] = []
+        try await client.leads.streamJob(jobId: "job_bad") { seen.append($0) }
+
+        XCTAssertEqual(seen.first?.event, "error")
+    }
+
+    func testJobStreamRefusalIsTyped() async throws {
+        let client = stub(
+            status: 402,
+            body: """
+            {"error":"monthly lead searches used up","upgrade":true,
+             "feature":"lead_searches","limit":50,"current":50,
+             "upgrade_url":"/settings?tab=billing"}
+            """
+        )
+
+        do {
+            try await client.leads.streamJob(jobId: "job_1") { _ in
+                XCTFail("no frame should be delivered on a refusal")
+            }
+            XCTFail("expected a refusal")
+        } catch let error as MisarReachError {
+            // A plan refusal on the stream must be the same typed error the
+            // JSON helper raises.
+            guard case .upgradeRequired(let status, _, let feature, _, _, let upgradeURL) = error else {
+                return XCTFail("expected upgradeRequired, got \(error)")
+            }
+            XCTAssertEqual(status, 402)
+            XCTAssertEqual(feature, "lead_searches")
+            // The server sends it app-relative; the SDK resolves it.
+            XCTAssertEqual(upgradeURL, "https://misarreach.com/settings?tab=billing")
+        }
     }
 }

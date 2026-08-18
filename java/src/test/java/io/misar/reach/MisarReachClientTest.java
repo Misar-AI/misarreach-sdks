@@ -29,12 +29,12 @@ class MisarReachClientTest {
     // ── Stub HttpClient ─────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    private static HttpClient stubClient(int status, String body) {
+    private static HttpClient stubClient(int status, String body, Map<String, List<String>> headers) {
         return new HttpClient() {
             @Override
             public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> handler)
                     throws IOException, InterruptedException {
-                return stubResponse(request, status, body, handler);
+                return stubResponse(request, status, body, headers, handler);
             }
 
             @Override
@@ -63,12 +63,13 @@ class MisarReachClientTest {
             @Override public Optional<java.time.Duration> connectTimeout() { return Optional.empty(); }
 
             private <T> HttpResponse<T> stubResponse(HttpRequest req, int code, String responseBody,
+                                                     Map<String, List<String>> responseHeaders,
                                                      HttpResponse.BodyHandler<T> handler) {
+                java.net.http.HttpHeaders stubHeaders =
+                        java.net.http.HttpHeaders.of(responseHeaders, (a, b) -> true);
                 HttpResponse.ResponseInfo info = new HttpResponse.ResponseInfo() {
                     public int statusCode() { return code; }
-                    public java.net.http.HttpHeaders headers() {
-                        return java.net.http.HttpHeaders.of(java.util.Map.of(), (a, b) -> true);
-                    }
+                    public java.net.http.HttpHeaders headers() { return stubHeaders; }
                     public HttpClient.Version version() { return HttpClient.Version.HTTP_1_1; }
                 };
 
@@ -87,9 +88,7 @@ class MisarReachClientTest {
                 return new HttpResponse<>() {
                     public int statusCode() { return code; }
                     public HttpRequest request() { return req; }
-                    public java.net.http.HttpHeaders headers() {
-                        return java.net.http.HttpHeaders.of(java.util.Map.of(), (a, b) -> true);
-                    }
+                    public java.net.http.HttpHeaders headers() { return stubHeaders; }
                     public T body() { return result; }
                     public Optional<HttpResponse<T>> previousResponse() { return Optional.empty(); }
                     public URI uri() { return req.uri(); }
@@ -101,10 +100,19 @@ class MisarReachClientTest {
     }
 
     private static MisarReachClient clientWith(int status, String body) {
+        return clientWith(status, body, Map.of());
+    }
+
+    private static MisarReachClient clientWith(
+            int status, String body, Map<String, List<String>> headers) {
         return new MisarReachClient.Builder("mrk_test")
                 .maxRetries(1)
-                .httpClient(stubClient(status, body))
+                .httpClient(stubClient(status, body, headers))
                 .build();
+    }
+
+    private static Map<String, List<String>> contentType(String value) {
+        return Map.of("content-type", List.of(value));
     }
 
     // ── Tests ───────────────────────────────────────────────────────────────────
@@ -162,17 +170,77 @@ class MisarReachClientTest {
     }
 
     @Test
-    void leadJobStream_parsesSseFrames() throws Exception {
-        String sse = "data: {\"status\":\"running\",\"progress\":10}\n"
-                + "\n"
-                + "data: {\"status\":\"running\",\"progress\":100}\n"
-                + "\n"
-                + "data: [DONE]\n";
-        MisarReachClient client = clientWith(200, sse);
-        List<Map<String, Object>> events = new ArrayList<>();
+    void leadJobStream_parsesNamedFrames() throws Exception {
+        // MisarReach names its events and sends `: keepalive` every 20s. It does
+        // not send a [DONE] sentinel — the stream ends when the server closes it.
+        String sse = "event: progress\ndata: {\"message\":\"searching\"}\n\n"
+                + ": keepalive\n\n"
+                + "event: found\ndata: {\"total\":12}\n\n"
+                + "event: complete\ndata: {\"total_found\":12}\n\n";
+
+        MisarReachClient client = clientWith(200, sse, contentType("text/event-stream"));
+        List<MisarReachClient.SseEvent> events = new ArrayList<>();
         client.leads.stream("job_1", events::add);
-        assertEquals(2, events.size());
-        assertEquals(10, events.get(0).get("progress"));
-        assertEquals(100, events.get(1).get("progress"));
+
+        // The keepalive comment must not surface as an event.
+        assertEquals(List.of("progress", "found", "complete"),
+                events.stream().map(MisarReachClient.SseEvent::event).toList());
+        assertEquals(12, events.get(1).data().get("total"));
+    }
+
+    @Test
+    void leadJobStream_reportsAnAlreadyFinishedJob() throws Exception {
+        // A finished job is answered with a JSON snapshot rather than a stream.
+        // Parsed as SSE this yields nothing, so the caller could not tell a
+        // finished job from a silent one.
+        MisarReachClient client = clientWith(
+                200,
+                "{\"status\":\"done\",\"total_found\":42,\"error\":null}",
+                contentType("application/json"));
+
+        List<MisarReachClient.SseEvent> events = new ArrayList<>();
+        client.leads.stream("job_done", events::add);
+
+        assertEquals(1, events.size());
+        assertEquals("complete", events.get(0).event());
+        assertEquals(42, events.get(0).data().get("total_found"));
+    }
+
+    @Test
+    void leadJobStream_reportsAFailedJobAsError() throws Exception {
+        MisarReachClient client = clientWith(
+                200,
+                "{\"status\":\"failed\",\"error\":\"no sources reachable\"}",
+                contentType("application/json"));
+
+        List<MisarReachClient.SseEvent> events = new ArrayList<>();
+        client.leads.stream("job_bad", events::add);
+
+        assertEquals("error", events.get(0).event());
+    }
+
+    @Test
+    void leadJobStream_refusalIsTyped() {
+        MisarReachClient client = clientWith(
+                402,
+                "{\"error\":\"monthly lead searches used up\",\"upgrade\":true,"
+                        + "\"feature\":\"lead_searches\",\"limit\":50,\"current\":50,"
+                        + "\"upgrade_url\":\"/settings?tab=billing\"}",
+                contentType("application/json"));
+
+        // A plan refusal on the stream must raise the same typed error the JSON
+        // helper raises, not a generic exception with a fixed message.
+        UpgradeRequiredException ex = assertThrows(UpgradeRequiredException.class,
+                () -> client.leads.stream("job_1", ev -> {
+                    throw new AssertionError("no frame on a refusal");
+                }));
+
+        assertEquals(402, ex.getStatus());
+        assertEquals("lead_searches", ex.getFeature());
+        // getMessage() is formatted as "MisarReachException(402): <message>",
+        // so the server's text is carried rather than replaced by a fixed string.
+        assertTrue(ex.getMessage().contains("monthly lead searches used up"));
+        // The server sends it app-relative; the SDK resolves it.
+        assertEquals("https://misarreach.com/settings?tab=billing", ex.getUpgradeUrl());
     }
 }

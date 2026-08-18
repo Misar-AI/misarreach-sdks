@@ -15,6 +15,17 @@ type APIError struct {
 	Message    string `json:"message"`
 	Code       string `json:"code,omitempty"`
 	RetryAfter int    `json:"retryAfter,omitempty"`
+	// Upgrade is true when the call was refused by the plan rather than by the
+	// rate limiter.
+	Upgrade bool `json:"upgrade,omitempty"`
+	// Feature is the counter that was exhausted, e.g. "lead_searches".
+	Feature string `json:"feature,omitempty"`
+	// Limit is the cap on the current plan.
+	Limit int `json:"limit,omitempty"`
+	// Current is usage against that cap when the call was refused.
+	Current int `json:"current,omitempty"`
+	// UpgradeURL is an absolute link to the billing page.
+	UpgradeURL string `json:"upgrade_url,omitempty"`
 }
 
 func (e *APIError) Error() string {
@@ -27,8 +38,23 @@ func (e *APIError) IsAuth() bool { return e.Status == 401 || e.Status == 403 }
 // IsNotFound reports a 404.
 func (e *APIError) IsNotFound() bool { return e.Status == 404 }
 
-// IsRateLimit reports a 429.
-func (e *APIError) IsRateLimit() bool { return e.Status == 429 }
+// IsRateLimit reports a 429 that is a genuine rate limit rather than a plan
+// refusal. The two share a status on older deployments, so Upgrade decides.
+func (e *APIError) IsRateLimit() bool { return e.Status == 429 && !e.Upgrade }
+
+// IsUpgradeRequired reports a counted plan cap being hit.
+//
+// MisarReach answers 402 with `upgrade: true` when a cap is reached —
+// searches, results, autopilot runs, deals, seats, channels — and names the
+// offending counter in Feature. Retrying cannot help until the cap resets or
+// the plan changes.
+//
+// Distinct from the 503 `retry: true` the server sends when it could not
+// *check* the quota: that one is retried, so "we do not know" is never
+// mistaken for "you are over your limit".
+func (e *APIError) IsUpgradeRequired() bool {
+	return e.Upgrade && (e.Status == 402 || e.Status == 429)
+}
 
 // NetworkError is a transport-level failure (connection reset, timeout, DNS, …).
 type NetworkError struct {

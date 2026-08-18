@@ -1,6 +1,6 @@
 # MisarReach Java SDK
 
-Official Java client for the [MisarReach](https://reach.misar.io) developer API
+Official Java client for the [MisarReach](https://misarreach.com) developer API
 (`https://api.misar.io/reach/api`). Full coverage of Lead Finder, deals & pipeline,
 multi-channel outreach, autopilot, sales agent, campaigns, contacts,
 conversations, workspaces, settings and ads — plus the SSE lead-job stream.
@@ -46,7 +46,7 @@ client.leads.searchAsync(Map.of("query", "CTOs"))
 
 ```java
 MisarReachClient client = new MisarReachClient.Builder("mrk_...")
-        .baseUrl("https://reach.misar.io/api")
+        .baseUrl("https://api.misar.io/reach/api")
         .maxRetries(5)
         .build();
 ```

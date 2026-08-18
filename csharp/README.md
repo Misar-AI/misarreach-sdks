@@ -1,6 +1,6 @@
 # MisarReach .NET SDK
 
-Official C# SDK for [MisarReach](https://reach.misar.io) — lead finder
+Official C# SDK for [MisarReach](https://misarreach.com) — lead finder
 (23 sources), multi-channel outreach, and CRM (deals, pipeline, sales agents).
 
 Authenticates with a `mrk_` API key against `https://api.misar.io/reach/api`.
@@ -20,7 +20,7 @@ using Misar.Reach;
 using var client = new MisarReachClient("mrk_...");
 
 // Start an async lead search
-var job = await client.Leads_SearchAsync(new { query = "saas founders", limit = 25 });
+var job = await client.Leads_SearchAsync(new { query = "saas founders", useAI = true });
 
 // Poll the job
 var status = await client.Leads_JobStatusAsync(job.GetProperty("jobId").GetString()!);

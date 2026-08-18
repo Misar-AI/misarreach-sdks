@@ -3,7 +3,7 @@
     "description": "Official PHP SDK for MisarReach — lead finder, multi-channel outreach, and CRM. Full API coverage.",
     "type": "library",
     "license": "MIT",
-    "homepage": "https://reach.misar.io",
+    "homepage": "https://misarreach.com",
     "keywords": ["misarreach", "leads", "outreach", "crm", "sdk", "php", "sales"],
     "authors": [
         {

@@ -30,6 +30,9 @@ pub use errors::ReachError;
 const DEFAULT_BASE_URL: &str = "https://api.misar.io/reach/api";
 const DEFAULT_MAX_RETRIES: u32 = 3;
 const RETRY_BASE_MS: u64 = 200;
+/// Resolves the app-relative `upgrade_url` the server returns.
+const APP_ORIGIN: &str = "https://misarreach.com";
+
 static RETRYABLE: &[u16] = &[429, 500, 502, 503, 504];
 
 // ── Inner ─────────────────────────────────────────────────────────────────────
@@ -52,6 +55,39 @@ impl Inner {
                 .expect("failed to build HTTP client"),
             max_retries,
         }
+    }
+
+    /// Returns an `UpgradeRequired` when the body is a plan refusal.
+    ///
+    /// The server sends `upgrade_url` app-relative (`/settings?tab=billing`);
+    /// it is resolved against the app origin so callers can link to it.
+    fn parse_upgrade_required(status: u16, text: &str) -> Option<ReachError> {
+        if !(status == 402 || status == 429) {
+            return None;
+        }
+        let v: Value = serde_json::from_str(text).ok()?;
+        if v.get("upgrade") != Some(&Value::Bool(true)) {
+            return None;
+        }
+
+        let upgrade_url = v.get("upgrade_url").and_then(Value::as_str).map(|u| {
+            if u.starts_with("http://") || u.starts_with("https://") {
+                u.to_owned()
+            } else if u.starts_with('/') {
+                format!("{APP_ORIGIN}{u}")
+            } else {
+                format!("{APP_ORIGIN}/{u}")
+            }
+        });
+
+        Some(ReachError::UpgradeRequired {
+            status,
+            message: Self::extract_message(text),
+            feature: v.get("feature").and_then(Value::as_str).map(str::to_owned),
+            limit: v.get("limit").and_then(Value::as_i64),
+            current: v.get("current").and_then(Value::as_i64),
+            upgrade_url,
+        })
     }
 
     fn extract_message(text: &str) -> String {
@@ -106,6 +142,20 @@ impl Inner {
                     let status = resp.status();
                     let status_u16 = status.as_u16();
 
+                    if status_u16 == 204 {
+                        return Ok(Value::Null);
+                    }
+
+                    let text = resp.text().await.unwrap_or_default();
+
+                    // A 429 rate limit and a 429 plan refusal are identical by
+                    // status; only the first is worth retrying. The server's
+                    // 503 `retry: true` carries no `upgrade`, so "we could not
+                    // check the quota" still retries.
+                    if let Some(err) = Self::parse_upgrade_required(status_u16, &text) {
+                        return Err(err);
+                    }
+
                     if RETRYABLE.contains(&status_u16) && attempt < self.max_retries - 1 {
                         last_err = Some(ReachError::Api {
                             status: status_u16,
@@ -113,12 +163,6 @@ impl Inner {
                         });
                         continue;
                     }
-
-                    if status_u16 == 204 {
-                        return Ok(Value::Null);
-                    }
-
-                    let text = resp.text().await.unwrap_or_default();
 
                     if !status.is_success() {
                         return Err(ReachError::Api {
@@ -216,12 +260,19 @@ impl Inner {
         }))
     }
 
-    /// Open the SSE stream for a lead-finder job and invoke `on_event` for every
-    /// `data:` frame carrying a JSON object. Returns when the stream closes or a
-    /// `[DONE]` sentinel is received.
+    /// Opens the SSE stream and invokes `on_event` for each frame.
+    ///
+    /// MisarReach names its events — `progress`, `found`, `complete`, `error`
+    /// and `timeout` — so the name is carried through rather than discarded;
+    /// without it a caller cannot tell completion from progress. Frames end at
+    /// a blank line and may span several `data:` lines, and `: keepalive`
+    /// comments (sent every 20s) are skipped.
+    ///
+    /// Deliberately not retried: replaying a stream that failed mid-flight
+    /// would duplicate whatever the caller already consumed.
     async fn sse<F>(&self, path: &str, mut on_event: F) -> Result<(), ReachError>
     where
-        F: FnMut(Value),
+        F: FnMut(ReachSseEvent),
     {
         use futures_util::StreamExt;
 
@@ -237,10 +288,41 @@ impl Inner {
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
+            if let Some(err) = Self::parse_upgrade_required(status.as_u16(), &text) {
+                return Err(err);
+            }
             return Err(ReachError::Api {
                 status: status.as_u16(),
                 message: Self::extract_message(&text),
             });
+        }
+
+        // The route does not always stream. A job that has already finished is
+        // answered with a JSON snapshot, because there is nothing left to
+        // stream. Parsing that as SSE finds no frames and returns silently, so
+        // the caller would see nothing rather than the outcome. Synthesise the
+        // terminal frame the SSE path would have sent.
+        let is_stream = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.contains("text/event-stream"));
+
+        if !is_stream {
+            let text = resp.text().await.unwrap_or_default();
+            let data = serde_json::from_str::<Value>(&text)
+                .unwrap_or_else(|_| Value::String(text.clone()));
+            let event = if data.get("status").and_then(Value::as_str) == Some("failed") {
+                "error"
+            } else {
+                "complete"
+            };
+            on_event(ReachSseEvent {
+                event: event.to_owned(),
+                data,
+                raw: text,
+            });
+            return Ok(());
         }
 
         let mut stream = resp.bytes_stream();
@@ -250,22 +332,21 @@ impl Inner {
             let chunk = chunk?;
             buf.push_str(&String::from_utf8_lossy(&chunk));
 
-            while let Some(pos) = buf.find('\n') {
-                let line: String = buf.drain(..=pos).collect();
-                let line = line.trim_end_matches(['\r', '\n']);
-                if let Some(data) = line.strip_prefix("data:") {
-                    let data = data.trim();
-                    if data.is_empty() {
-                        continue;
-                    }
-                    if data == "[DONE]" {
-                        return Ok(());
-                    }
-                    if let Ok(v) = serde_json::from_str::<Value>(data) {
-                        on_event(v);
-                    }
+            while let Some(end) = frame_end(&buf) {
+                let frame: String = buf.drain(..end).collect();
+                // Drop the blank line that terminated it.
+                while buf.starts_with('\r') || buf.starts_with('\n') {
+                    buf.remove(0);
+                }
+                if let Some(event) = parse_frame(&frame) {
+                    on_event(event);
                 }
             }
+        }
+
+        // A trailing frame the server never closed with a blank line.
+        if let Some(event) = parse_frame(&buf) {
+            on_event(event);
         }
 
         Ok(())
@@ -287,6 +368,7 @@ pub struct MisarReachClient {
     pub conversations: ConversationsResource,
     pub workspaces: WorkspacesResource,
     pub settings: SettingsResource,
+    pub plan: PlanResource,
     pub ads: AdsResource,
     pub campaign_templates: CampaignTemplatesResource,
     pub deliverability: DeliverabilityResource,
@@ -300,7 +382,7 @@ impl MisarReachClient {
         Self::build(api_key, DEFAULT_BASE_URL, DEFAULT_MAX_RETRIES)
     }
 
-    /// Override the base URL (e.g. `https://reach.misar.io/api`).
+    /// Override the base URL (e.g. `https://api.misar.io/reach/api`).
     pub fn with_base_url(self, url: &str) -> Self {
         let inner = &self.leads.0;
         Self::build(&inner.api_key, url, inner.max_retries)
@@ -326,6 +408,7 @@ impl MisarReachClient {
             conversations: ConversationsResource(Arc::clone(&inner)),
             workspaces: WorkspacesResource(Arc::clone(&inner)),
             settings: SettingsResource(Arc::clone(&inner)),
+            plan: PlanResource(Arc::clone(&inner)),
             ads: AdsResource(Arc::clone(&inner)),
             campaign_templates: CampaignTemplatesResource(Arc::clone(&inner)),
             deliverability: DeliverabilityResource(Arc::clone(&inner)),
@@ -438,11 +521,23 @@ impl LeadsResource {
 
     /// GET /lead-finder/jobs/{jobId}/stream — Server-Sent Events.
     ///
-    /// `on_event` is invoked for every JSON `data:` frame until the stream
-    /// closes or a `[DONE]` sentinel arrives.
+    /// `on_event` is invoked per frame with the server's event name attached:
+    /// `progress`, `found`, `complete`, `error` or `timeout`. A job that has
+    /// already finished is reported as a single `complete` (or `error`) frame,
+    /// so the caller does not need to special-case it.
+    ///
+    /// ```no_run
+    /// # async fn demo(reach: misarreach::MisarReachClient) -> Result<(), misarreach::ReachError> {
+    /// reach.leads.stream("job_1", |ev| match ev.event.as_str() {
+    ///     "progress" => println!("{}", ev.data),
+    ///     "complete" => println!("done"),
+    ///     _ => {}
+    /// }).await
+    /// # }
+    /// ```
     pub async fn stream<F>(&self, job_id: &str, on_event: F) -> Result<(), ReachError>
     where
-        F: FnMut(Value),
+        F: FnMut(ReachSseEvent),
     {
         self.0.sse(&format!("/lead-finder/jobs/{}/stream", job_id), on_event).await
     }
@@ -908,6 +1003,23 @@ impl WorkspacesResource {
 
 // ── Resource: Settings ──────────────────────────────────────────────────────────
 
+/// The subscription behind the API key.
+///
+/// Read this before an expensive run rather than discovering the ceiling through
+/// [`ReachError::UpgradeRequired`] halfway through: a 402 says a call *was*
+/// refused, whereas `usage` says what is left before anything is spent.
+pub struct PlanResource(Arc<Inner>);
+
+impl PlanResource {
+    /// `GET /plan` — plan, caps, per-feature usage and the upgrade offer.
+    ///
+    /// A null limit means unlimited, and `remaining` is null with it rather than
+    /// 0 — 0 would read as exhausted.
+    pub async fn get(&self) -> Result<Value, ReachError> {
+        self.0.get_with_params("/plan", Value::Null).await
+    }
+}
+
 pub struct SettingsResource(Arc<Inner>);
 
 impl SettingsResource {
@@ -931,4 +1043,64 @@ impl AdsResource {
     pub async fn linkedin_company_audience(&self, data: Value) -> Result<Value, ReachError> {
         self.0.request(Method::POST, "/ads/linkedin/company-audience", Some(data)).await
     }
+}
+
+// ── Server-Sent Events ────────────────────────────────────────────────────────
+
+/// One frame from the lead-finder progress stream.
+///
+/// MisarReach names its events, unlike the unnamed-frame dialect used
+/// elsewhere, so [`event`](Self::event) is the field callers switch on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReachSseEvent {
+    /// The server's `event:` name — `progress`, `found`, `complete`, `error` or
+    /// `timeout`. `message` when a frame carries no name, per the SSE default.
+    pub event: String,
+    /// Decoded payload, or a JSON string when the frame was not JSON.
+    pub data: Value,
+    /// The payload exactly as received.
+    pub raw: String,
+}
+
+/// Offset of the blank line ending the first complete frame.
+fn frame_end(buf: &str) -> Option<usize> {
+    match (buf.find("\n\n"), buf.find("\r\n\r\n")) {
+        (None, None) => None,
+        (Some(lf), None) => Some(lf),
+        (None, Some(crlf)) => Some(crlf),
+        (Some(lf), Some(crlf)) => Some(lf.min(crlf)),
+    }
+}
+
+/// Parses one frame, or `None` for a keepalive comment or a frame with no data.
+fn parse_frame(frame: &str) -> Option<ReachSseEvent> {
+    let mut event = String::new();
+    let mut data_lines: Vec<&str> = Vec::new();
+
+    for line in frame.split('\n') {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() || line.starts_with(':') {
+            continue; // blank or keepalive comment
+        }
+        if let Some(rest) = line.strip_prefix("event:") {
+            event = rest.trim().to_owned();
+        } else if let Some(rest) = line.strip_prefix("data:") {
+            // SSE strips exactly one space after the colon.
+            data_lines.push(rest.strip_prefix(' ').unwrap_or(rest));
+        }
+    }
+
+    if data_lines.is_empty() {
+        return None;
+    }
+
+    let raw = data_lines.join("\n");
+    let data = serde_json::from_str::<Value>(&raw)
+        .unwrap_or_else(|_| Value::String(raw.clone()));
+
+    Some(ReachSseEvent {
+        event: if event.is_empty() { "message".to_owned() } else { event },
+        data,
+        raw,
+    })
 }

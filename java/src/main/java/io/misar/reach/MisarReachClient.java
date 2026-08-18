@@ -2,7 +2,10 @@ package io.misar.reach;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -10,7 +13,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -35,6 +40,9 @@ import java.util.stream.Stream;
 public final class MisarReachClient {
 
     private static final Set<Integer> RETRYABLE = Set.of(429, 500, 502, 503, 504);
+
+    /** Resolves the app-relative upgrade_url the server returns. */
+    private static final String APP_ORIGIN = "https://misarreach.com";
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
@@ -56,7 +64,9 @@ public final class MisarReachClient {
     public final ConversationsResource conversations;
     public final WorkspacesResource workspaces;
     public final SettingsResource settings;
+    public final PlanResource plan;
     public final AdsResource ads;
+    public final LeadFinderResource leadFinder;
     public final CampaignTemplatesResource campaignTemplates;
     public final DeliverabilityResource deliverability;
     public final NotificationsResource notifications;
@@ -80,7 +90,9 @@ public final class MisarReachClient {
         this.conversations = new ConversationsResource();
         this.workspaces = new WorkspacesResource();
         this.settings = new SettingsResource();
+        this.plan = new PlanResource();
         this.ads = new AdsResource();
+        this.leadFinder = new LeadFinderResource();
         this.campaignTemplates = new CampaignTemplatesResource();
         this.deliverability = new DeliverabilityResource();
         this.notifications = new NotificationsResource();
@@ -119,7 +131,37 @@ public final class MisarReachClient {
         return URLEncoder.encode(s, StandardCharsets.UTF_8);
     }
 
+    /**
+     * Returns an {@link UpgradeRequiredException} when the body is a plan
+     * refusal, otherwise {@code null}. The server sends {@code upgrade_url}
+     * app-relative, so it is resolved against the app origin.
+     */
     @SuppressWarnings("unchecked")
+    private UpgradeRequiredException upgradeRefusal(int status, String body) {
+        if ((status != 402 && status != 429) || body == null || body.isBlank()) return null;
+        try {
+            Map<String, Object> m = mapper.readValue(body, Map.class);
+            if (!Boolean.TRUE.equals(m.get("upgrade"))) return null;
+
+            Object url = m.get("upgrade_url");
+            String upgradeUrl = null;
+            if (url instanceof String u && !u.isBlank()) {
+                upgradeUrl = u.startsWith("http://") || u.startsWith("https://")
+                        ? u
+                        : APP_ORIGIN + (u.startsWith("/") ? u : "/" + u);
+            }
+            return new UpgradeRequiredException(
+                    status,
+                    extractMessage(body),
+                    m.get("feature") instanceof String f ? f : null,
+                    m.get("limit") instanceof Number l ? l.intValue() : null,
+                    m.get("current") instanceof Number c ? c.intValue() : null,
+                    upgradeUrl);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     private String extractMessage(String responseBody) {
         if (responseBody == null || responseBody.isBlank()) return "error";
         try {
@@ -184,6 +226,13 @@ public final class MisarReachClient {
             }
 
             int status = resp.statusCode();
+
+            // A 429 rate limit and a 429 plan refusal are identical by status;
+            // only the first is worth retrying. The server's 503 retry:true
+            // carries no upgrade flag, so "could not check" still retries.
+            UpgradeRequiredException refusal = upgradeRefusal(status, resp.body());
+            if (refusal != null) throw refusal;
+
             if (RETRYABLE.contains(status) && attempt < maxRetries - 1) {
                 last = new MisarReachException(status, resp.body());
                 continue;
@@ -212,11 +261,25 @@ public final class MisarReachClient {
     }
 
     /**
-     * Open a Server-Sent Events stream and invoke {@code onEvent} for every JSON
-     * {@code data:} frame until the stream closes or a {@code [DONE]} sentinel
-     * arrives. Blocks the calling thread for the lifetime of the stream.
+     * One frame from the lead-finder progress stream.
+     *
+     * <p>MisarReach names its events, so {@code event} is what callers switch
+     * on: {@code progress}, {@code found}, {@code complete}, {@code error} or
+     * {@code timeout}. {@code data} is the decoded payload, or null when the
+     * frame was not JSON; {@code raw} is always the payload as received.
      */
-    void stream(String path, Consumer<Map<String, Object>> onEvent) throws MisarReachException {
+    public record SseEvent(String event, Map<String, Object> data, String raw) {}
+
+    /**
+     * Opens the SSE stream and invokes {@code onEvent} per frame. Blocks the
+     * calling thread for the lifetime of the stream.
+     *
+     * <p>Frames end at a blank line and may span several {@code data:} lines;
+     * {@code : keepalive} comments (sent every 20s) are skipped. Deliberately
+     * not retried: replaying a stream that failed mid-flight would duplicate
+     * whatever the caller already consumed.
+     */
+    void stream(String path, Consumer<SseEvent> onEvent) throws MisarReachException {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path))
                 .header("Authorization", "Bearer " + apiKey)
@@ -224,30 +287,105 @@ public final class MisarReachClient {
                 .GET()
                 .build();
         try {
-            HttpResponse<Stream<String>> resp = http.send(request, HttpResponse.BodyHandlers.ofLines());
+            HttpResponse<InputStream> resp =
+                    http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             int status = resp.statusCode();
+
             if (status < 200 || status >= 300) {
-                throw new MisarReachException(status, "stream request failed");
+                String body = new String(resp.body().readAllBytes(), StandardCharsets.UTF_8);
+                UpgradeRequiredException refusal = upgradeRefusal(status, body);
+                if (refusal != null) throw refusal;
+                // The message the server sent, rather than a fixed string.
+                throw new MisarReachException(status, extractMessage(body));
             }
-            try (Stream<String> lines = resp.body()) {
-                lines.forEach(line -> {
-                    if (line == null) return;
-                    String trimmed = line.strip();
-                    if (!trimmed.startsWith("data:")) return;
-                    String data = trimmed.substring("data:".length()).strip();
-                    if (data.isEmpty() || data.equals("[DONE]")) return;
-                    try {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> event = mapper.readValue(data, Map.class);
-                        onEvent.accept(event);
-                    } catch (Exception ignored) {
-                        // skip malformed frame
+
+            // The route does not always stream. A job that has already finished
+            // is answered with a JSON snapshot, because there is nothing left to
+            // stream. Parsing that as SSE finds no frames and returns silently,
+            // so the caller would see nothing rather than the outcome.
+            String contentType = resp.headers().firstValue("content-type").orElse("");
+            if (!contentType.contains("text/event-stream")) {
+                String body = new String(resp.body().readAllBytes(), StandardCharsets.UTF_8);
+                Map<String, Object> snapshot = readMapOrNull(body);
+                String name = snapshot != null && "failed".equals(snapshot.get("status"))
+                        ? "error"
+                        : "complete";
+                onEvent.accept(new SseEvent(name, snapshot, body));
+                return;
+            }
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(resp.body(), StandardCharsets.UTF_8))) {
+                String eventName = null;
+                List<String> dataLines = new ArrayList<>();
+                String line;
+
+                while ((line = reader.readLine()) != null) {
+                    if (line.isEmpty()) {
+                        SseEvent frame = buildFrame(eventName, dataLines);
+                        eventName = null;
+                        dataLines.clear();
+                        if (frame != null) onEvent.accept(frame);
+                        continue;
                     }
-                });
+                    if (line.startsWith(":")) continue;  // keepalive comment
+                    if (line.startsWith("event:")) {
+                        eventName = line.substring("event:".length()).trim();
+                    } else if (line.startsWith("data:")) {
+                        String rest = line.substring("data:".length());
+                        // SSE strips exactly one space after the colon.
+                        dataLines.add(rest.startsWith(" ") ? rest.substring(1) : rest);
+                    }
+                }
+
+                // A trailing frame the server never closed with a blank line.
+                SseEvent tail = buildFrame(eventName, dataLines);
+                if (tail != null) onEvent.accept(tail);
             }
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new MisarReachException(0, "stream failed: " + e.getMessage(), e);
+        }
+    }
+
+    /** Assembles the accumulated lines into a frame, or null if it carried no data. */
+    private SseEvent buildFrame(String eventName, List<String> dataLines) {
+        if (dataLines.isEmpty()) return null;
+        String raw = String.join("\n", dataLines);
+        return new SseEvent(
+                eventName == null || eventName.isEmpty() ? "message" : eventName,
+                readMapOrNull(raw),
+                raw);
+    }
+
+    /** Decodes a JSON object, or null when the payload was not one. */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readMapOrNull(String body) {
+        if (body == null || body.isBlank()) return null;
+        try {
+            return mapper.readValue(body, Map.class);
+        } catch (Exception ignored) {
+            return null;   // raw still carries it
+        }
+    }
+
+    /**
+     * The subscription behind the API key.
+     *
+     * <p>Read this before an expensive run rather than discovering the ceiling
+     * through an {@link UpgradeRequiredException} halfway through: a 402 says a
+     * call <em>was</em> refused, whereas {@code usage} says what is left before
+     * anything is spent.
+     */
+    public final class PlanResource {
+        /**
+         * {@code GET /plan} — plan, caps, per-feature usage and the upgrade offer.
+         *
+         * <p>A null limit means unlimited, and {@code remaining} is null with it
+         * rather than 0 — 0 would read as exhausted.
+         */
+        public Map<String, Object> get() throws MisarReachException {
+            return req("GET", "/plan", null);
         }
     }
 
@@ -276,8 +414,15 @@ public final class MisarReachClient {
         public Map<String, Object> job(String jobId) throws MisarReachException { return req("GET", "/lead-finder/jobs/" + jobId, null); }
         public Map<String, Object> jobFeedback(String jobId, Map<String, Object> data) throws MisarReachException { return req("POST", "/lead-finder/jobs/" + jobId + "/feedback", data); }
 
-        /** GET /lead-finder/jobs/{jobId}/stream — Server-Sent Events (blocking). */
-        public void stream(String jobId, Consumer<Map<String, Object>> onEvent) throws MisarReachException {
+        /**
+         * GET /lead-finder/jobs/{jobId}/stream — Server-Sent Events (blocking).
+         *
+         * <p>Each frame carries the server's event name: {@code progress},
+         * {@code found}, {@code complete}, {@code error} or {@code timeout}. A
+         * job that has already finished arrives as a single {@code complete}
+         * (or {@code error}) frame, so callers need no special case for it.
+         */
+        public void stream(String jobId, Consumer<SseEvent> onEvent) throws MisarReachException {
             MisarReachClient.this.stream("/lead-finder/jobs/" + jobId + "/stream", onEvent);
         }
 
@@ -324,6 +469,11 @@ public final class MisarReachClient {
         public CompletableFuture<Map<String, Object>> createAsync(Map<String, Object> data) { return async("POST", "/deals", data); }
         public CompletableFuture<Map<String, Object>> updateAsync(String id, Map<String, Object> data) { return async("PATCH", "/deals/" + id, data); }
         public CompletableFuture<Map<String, Object>> deleteAsync(String id) { return async("DELETE", "/deals/" + id, null); }
+        /** {@code DELETE /deals/:id} */
+        public Map<String, Object> remove(String id) throws MisarReachException {
+            return req("DELETE", "/deals/" + enc(id), null);
+        }
+
     }
 
     // ── Resource: Pipeline ─────────────────────────────────────────────────────
@@ -364,6 +514,11 @@ public final class MisarReachClient {
 
         public CompletableFuture<Map<String, Object>> startAsync(Map<String, Object> data) { return async("POST", "/autopilot/start", data); }
         public CompletableFuture<Map<String, Object>> runsAsync(Map<String, Object> params) { return async("GET", "/autopilot/runs" + qs(params), null); }
+        /** {@code POST /autopilot/:id/status} */
+        public Map<String, Object> setStatus(String id, Map<String, Object> body) throws MisarReachException {
+            return req("POST", "/autopilot/" + enc(id) + "/status", body);
+        }
+
     }
 
     // ── Resource: Sales Agent ──────────────────────────────────────────────────
@@ -390,6 +545,11 @@ public final class MisarReachClient {
 
         public CompletableFuture<Map<String, Object>> listAsync(Map<String, Object> params) { return async("GET", "/campaigns" + qs(params), null); }
         public CompletableFuture<Map<String, Object>> createAsync(Map<String, Object> data) { return async("POST", "/campaigns", data); }
+        /** {@code DELETE /campaigns/:id} */
+        public Map<String, Object> remove(String id) throws MisarReachException {
+            return req("DELETE", "/campaigns/" + enc(id), null);
+        }
+
     }
 
     // ── Resource: Contacts ─────────────────────────────────────────────────────
@@ -408,6 +568,11 @@ public final class MisarReachClient {
         public CompletableFuture<Map<String, Object>> listAsync(Map<String, Object> params) { return async("GET", "/contacts" + qs(params), null); }
         public CompletableFuture<Map<String, Object>> createAsync(Map<String, Object> data) { return async("POST", "/contacts", data); }
         public CompletableFuture<Map<String, Object>> importContactsAsync(Map<String, Object> data) { return async("POST", "/contacts/import", data); }
+        /** {@code DELETE /contacts/:id} */
+        public Map<String, Object> remove(String id) throws MisarReachException {
+            return req("DELETE", "/contacts/" + enc(id), null);
+        }
+
     }
 
     // ── Resource: Conversations ────────────────────────────────────────────────
@@ -490,5 +655,54 @@ public final class MisarReachClient {
 
     public final class AdsResource {
         public Map<String, Object> linkedinCompanyAudience(Map<String, Object> data) throws MisarReachException { return req("POST", "/ads/linkedin/company-audience", data); }
+    }
+
+    // ── Generated from scripts/sdk-endpoint-spec.json ────────────────────────
+    //
+    // Only the operations the hand-written resources lack, matched by
+    // (resource, method name) so nothing is redeclared.
+
+    /** leadFinder — generated. */
+    public final class LeadFinderResource {
+        /** {@code GET /lead-finder/companies/:id} */
+        public Map<String, Object> company(String id) throws MisarReachException {
+            return req("GET", "/lead-finder/companies/" + enc(id), null);
+        }
+
+        /** {@code GET /lead-finder/companies/:id/people} */
+        public Map<String, Object> companyPeople(String id) throws MisarReachException {
+            return req("GET", "/lead-finder/companies/" + enc(id) + "/people", null);
+        }
+
+        /** {@code GET /lead-finder/jobs/:id} */
+        public Map<String, Object> job(String id) throws MisarReachException {
+            return req("GET", "/lead-finder/jobs/" + enc(id), null);
+        }
+
+        /** {@code POST /lead-finder/jobs/:id/feedback} */
+        public Map<String, Object> jobFeedback(String id, Map<String, Object> body) throws MisarReachException {
+            return req("POST", "/lead-finder/jobs/" + enc(id) + "/feedback", body);
+        }
+
+        /** {@code POST /lead-finder/lists/:id/sync} */
+        public Map<String, Object> syncList(String id, Map<String, Object> body) throws MisarReachException {
+            return req("POST", "/lead-finder/lists/" + enc(id) + "/sync", body);
+        }
+
+        /** {@code DELETE /lead-finder/saved-searches/:id} */
+        public Map<String, Object> removeSavedSearch(String id) throws MisarReachException {
+            return req("DELETE", "/lead-finder/saved-searches/" + enc(id), null);
+        }
+
+        /** {@code PATCH /lead-finder/scoring-rules/:id} */
+        public Map<String, Object> updateScoringRule(String id, Map<String, Object> body) throws MisarReachException {
+            return req("PATCH", "/lead-finder/scoring-rules/" + enc(id), body);
+        }
+
+        /** {@code DELETE /lead-finder/scoring-rules/:id} */
+        public Map<String, Object> removeScoringRule(String id) throws MisarReachException {
+            return req("DELETE", "/lead-finder/scoring-rules/" + enc(id), null);
+        }
+
     }
 }

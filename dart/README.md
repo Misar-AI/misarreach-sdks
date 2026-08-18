@@ -1,6 +1,6 @@
 # MisarReach Dart SDK
 
-Official Dart client for the [MisarReach](https://reach.misar.io) developer API —
+Official Dart client for the [MisarReach](https://misarreach.com) developer API —
 lead finder (23 sources), multi-channel outreach, CRM (deals + pipeline),
 autopilot, and the AI sales agent.
 

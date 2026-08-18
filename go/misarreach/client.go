@@ -19,6 +19,9 @@ import (
 )
 
 const (
+	// appOrigin resolves the app-relative upgrade_url the server returns.
+	appOrigin = "https://misarreach.com"
+
 	defaultBaseURL    = "https://api.misar.io/reach/api"
 	defaultMaxRetries = 3
 	defaultTimeout    = 30 * time.Second
@@ -26,6 +29,19 @@ const (
 )
 
 var retryable = map[int]bool{429: true, 500: true, 502: true, 503: true, 504: true}
+
+// isUpgradeRefusal reports whether a body is a plan refusal rather than a rate
+// limit. The server's 503 `retry: true` deliberately does NOT carry `upgrade`,
+// so "we could not check the quota" still retries.
+func isUpgradeRefusal(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var probe struct {
+		Upgrade bool `json:"upgrade"`
+	}
+	return json.Unmarshal(raw, &probe) == nil && probe.Upgrade
+}
 
 // Response is the generic decoded JSON object returned by most endpoints.
 // The reach contract intentionally leaves response bodies open, so callers
@@ -70,8 +86,10 @@ type Client struct {
 	Contacts      *ContactsResource
 	Conversations *ConversationsResource
 	Settings      *SettingsResource
+	Plan          *PlanResource
 	Workspaces    *WorkspacesResource
 	Ads           *AdsResource
+	LeadFinder    *LeadFinderResource
 
 	CampaignTemplates *CampaignTemplatesResource
 	Deliverability    *DeliverabilityResource
@@ -100,8 +118,10 @@ func New(apiKey string, opts ...Option) *Client {
 	c.Contacts = &ContactsResource{c}
 	c.Conversations = &ConversationsResource{c}
 	c.Settings = &SettingsResource{c}
+	c.Plan = &PlanResource{c}
 	c.Workspaces = &WorkspacesResource{c}
 	c.Ads = &AdsResource{c}
+	c.LeadFinder = &LeadFinderResource{c}
 	c.CampaignTemplates = &CampaignTemplatesResource{c}
 	c.Deliverability = &DeliverabilityResource{c}
 	c.Notifications = &NotificationsResource{c}
@@ -142,15 +162,16 @@ func (c *Client) do(ctx context.Context, method, path string, body interface{}) 
 			return nil, lastErr
 		}
 
-		if retryable[resp.StatusCode] && attempt < c.maxRetries-1 {
-			io.Copy(io.Discard, resp.Body) //nolint:errcheck
-			resp.Body.Close()
+		// Read once: a 429 rate limit and a 429 plan refusal (older
+		// deployments) are identical by status, and only the first is worth
+		// retrying. 402 is not retryable, so it falls through regardless.
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if retryable[resp.StatusCode] && attempt < c.maxRetries-1 && !isUpgradeRefusal(raw) {
 			time.Sleep(retryBaseMS * (1 << attempt))
 			continue
 		}
-
-		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return nil, parseError(resp.StatusCode, raw)
@@ -177,6 +198,11 @@ func parseError(status int, raw []byte) error {
 		Message    string          `json:"message"`
 		Code       string          `json:"code"`
 		RetryAfter int             `json:"retryAfter"`
+		Upgrade    bool            `json:"upgrade"`
+		Feature    string          `json:"feature"`
+		Limit      int             `json:"limit"`
+		Current    int             `json:"current"`
+		UpgradeURL string          `json:"upgrade_url"`
 	}
 	_ = json.Unmarshal(raw, &env)
 	msg := ""
@@ -194,7 +220,20 @@ func parseError(status int, raw []byte) error {
 	if msg == "" {
 		msg = http.StatusText(status)
 	}
-	return &APIError{Status: status, Message: msg, Code: env.Code, RetryAfter: env.RetryAfter}
+	// The server sends upgrade_url as an app-relative path; make it linkable.
+	upgradeURL := env.UpgradeURL
+	if upgradeURL != "" && !strings.HasPrefix(upgradeURL, "http://") && !strings.HasPrefix(upgradeURL, "https://") {
+		if !strings.HasPrefix(upgradeURL, "/") {
+			upgradeURL = "/" + upgradeURL
+		}
+		upgradeURL = appOrigin + upgradeURL
+	}
+
+	return &APIError{
+		Status: status, Message: msg, Code: env.Code, RetryAfter: env.RetryAfter,
+		Upgrade: env.Upgrade, Feature: env.Feature, Limit: env.Limit,
+		Current: env.Current, UpgradeURL: upgradeURL,
+	}
 }
 
 // ── Query helper ──────────────────────────────────────────────────────────────────

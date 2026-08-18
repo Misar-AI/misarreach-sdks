@@ -20,11 +20,16 @@ class MisarReachClientTest {
 
     // ── Stub HttpClient (no network) ────────────────────────────────────────────
 
-    private fun stubClient(status: Int, body: String): HttpClient = object : HttpClient() {
+    private fun stubClient(
+        status: Int,
+        body: String,
+        headers: Map<String, List<String>> = emptyMap(),
+    ): HttpClient = object : HttpClient() {
         override fun <T> send(request: HttpRequest, handler: HttpResponse.BodyHandler<T>): HttpResponse<T> {
+            val stubHeaders = java.net.http.HttpHeaders.of(headers) { _, _ -> true }
             val info = object : HttpResponse.ResponseInfo {
                 override fun statusCode() = status
-                override fun headers() = java.net.http.HttpHeaders.of(emptyMap()) { _, _ -> true }
+                override fun headers() = stubHeaders
                 override fun version() = Version.HTTP_1_1
             }
             val subscriber = handler.apply(info)
@@ -40,7 +45,7 @@ class MisarReachClientTest {
             return object : HttpResponse<T> {
                 override fun statusCode() = status
                 override fun request() = request
-                override fun headers() = java.net.http.HttpHeaders.of(emptyMap()) { _, _ -> true }
+                override fun headers() = stubHeaders
                 override fun body(): T = result
                 override fun previousResponse(): Optional<HttpResponse<T>> = Optional.empty()
                 override fun uri(): URI = request.uri()
@@ -69,8 +74,18 @@ class MisarReachClientTest {
         override fun executor(): Optional<java.util.concurrent.Executor> = Optional.empty()
     }
 
-    private fun clientWith(status: Int, body: String): MisarReachClient =
-        MisarReachClient(apiKey = "mrk_test", maxRetries = 1, httpClient = stubClient(status, body))
+    private fun clientWith(
+        status: Int,
+        body: String,
+        headers: Map<String, List<String>> = emptyMap(),
+    ): MisarReachClient =
+        MisarReachClient(
+            apiKey = "mrk_test",
+            maxRetries = 1,
+            httpClient = stubClient(status, body, headers),
+        )
+
+    private fun contentType(value: String) = mapOf("content-type" to listOf(value))
 
     // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -121,16 +136,73 @@ class MisarReachClientTest {
     }
 
     @Test
-    fun `lead job SSE stream parses frames`() = runBlocking {
-        val sse = "data: {\"status\":\"running\",\"progress\":10}\n" +
-            "\n" +
-            "data: {\"status\":\"running\",\"progress\":100}\n" +
-            "\n" +
-            "data: [DONE]\n"
-        val client = clientWith(200, sse)
+    fun `lead job SSE stream emits each named frame`() = runBlocking {
+        // MisarReach names its events and sends `: keepalive` every 20s. It does
+        // not send a [DONE] sentinel — the stream ends when the server closes it.
+        val sse = "event: progress\ndata: {\"message\":\"searching\"}\n\n" +
+            ": keepalive\n\n" +
+            "event: found\ndata: {\"total\":12}\n\n" +
+            "event: complete\ndata: {\"total_found\":12}\n\n"
+
+        val client = clientWith(200, sse, contentType("text/event-stream"))
         val events = client.leads.stream("job_1").toList()
-        assertEquals(2, events.size)
-        assertEquals(10, events[0]["progress"])
-        assertEquals(100, events[1]["progress"])
+
+        // The keepalive comment must not surface as an event.
+        assertEquals(listOf("progress", "found", "complete"), events.map { it.event })
+        assertEquals(12, events[1].data?.get("total"))
+    }
+
+    @Test
+    fun `lead job stream reports an already finished job`() = runBlocking {
+        // A finished job is answered with a JSON snapshot rather than a stream.
+        // Parsed as SSE this emits nothing, so the caller could not tell a
+        // finished job from a silent one.
+        val client = clientWith(
+            200,
+            """{"status":"done","total_found":42,"error":null}""",
+            contentType("application/json"),
+        )
+
+        val events = client.leads.stream("job_done").toList()
+
+        assertEquals(1, events.size)
+        assertEquals("complete", events[0].event)
+        assertEquals(42, events[0].data?.get("total_found"))
+    }
+
+    @Test
+    fun `lead job stream reports a failed job as error`() = runBlocking {
+        val client = clientWith(
+            200,
+            """{"status":"failed","error":"no sources reachable"}""",
+            contentType("application/json"),
+        )
+
+        val events = client.leads.stream("job_bad").toList()
+
+        assertEquals("error", events[0].event)
+    }
+
+    @Test
+    fun `lead job stream refusal is typed`() = runBlocking {
+        val client = clientWith(
+            402,
+            """{"error":"monthly lead searches used up","upgrade":true,
+                "feature":"lead_searches","limit":50,"current":50,
+                "upgrade_url":"/settings?tab=billing"}""",
+            contentType("application/json"),
+        )
+
+        // A plan refusal on the stream must raise the same typed error the JSON
+        // helper raises, not a generic exception with a fixed message.
+        val ex = assertFailsWith<UpgradeRequiredException> {
+            client.leads.stream("job_1").toList()
+        }
+
+        assertEquals(402, ex.status)
+        assertEquals("lead_searches", ex.feature)
+        assertTrue(ex.message!!.contains("monthly lead searches used up"))
+        // The server sends it app-relative; the SDK resolves it.
+        assertEquals("https://misarreach.com/settings?tab=billing", ex.upgradeUrl)
     }
 }

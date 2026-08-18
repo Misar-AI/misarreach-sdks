@@ -1,6 +1,6 @@
 # @misarreach/sdk
 
-TypeScript SDK for the [MisarReach](https://reach.misar.io) API.
+TypeScript SDK for the [MisarReach](https://misarreach.com) API.
 
 MisarReach is a multi-channel outreach platform: a 23-source lead finder,
 campaign dispatch across email and social channels, a deals/pipeline CRM,

@@ -15,8 +15,8 @@
     <Company>Misar AI Technology Pvt Ltd</Company>
     <Description>Official C# SDK for MisarReach — lead finder (23 sources), multi-channel outreach, and CRM (deals, pipeline, sales agents). Full API coverage with async/await support.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://reach.misar.io/docs</PackageProjectUrl>
-    <RepositoryUrl>https://reach.misar.io</RepositoryUrl>
+    <PackageProjectUrl>https://misarreach.com/docs</PackageProjectUrl>
+    <RepositoryUrl>https://misarreach.com</RepositoryUrl>
     <PackageTags>misarreach;leads;outreach;crm;sdk;api;sales</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
@@ -24,6 +24,16 @@
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!--
+    Tests/ is its own project and references xUnit. Without this exclusion the
+    SDK's default **/*.cs glob pulls the test sources into the library build,
+    which then fails on the missing xUnit reference.
+  -->
+  <ItemGroup>
+    <Compile Remove="Tests/**" />
+    <None Remove="Tests/**" />
   </ItemGroup>
 
 </Project>

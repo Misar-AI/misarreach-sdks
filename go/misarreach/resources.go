@@ -340,6 +340,22 @@ func (r *WebhooksResource) Create(ctx context.Context, body interface{}) (Respon
 	return r.c.do(ctx, http.MethodPost, "/webhooks/endpoints", body)
 }
 
+// ── Plan ──────────────────────────────────────────────────────────────────────────
+
+// PlanResource reports the subscription behind the API key.
+//
+// Read this before an expensive run rather than discovering the ceiling through
+// an UpgradeRequired error halfway through: a 402 says a call *was* refused,
+// whereas usage says what is left before anything is spent.
+type PlanResource struct{ c *Client }
+
+// Get calls GET /plan for the plan, its caps, per-feature usage and the upgrade
+// offer. A null limit in the response means unlimited, and remaining is null
+// with it rather than 0 — 0 would read as exhausted.
+func (r *PlanResource) Get(ctx context.Context) (Response, error) {
+	return r.c.do(ctx, http.MethodGet, "/plan", nil)
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────────
 
 type SettingsResource struct{ c *Client }

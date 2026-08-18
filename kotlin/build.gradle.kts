@@ -42,7 +42,7 @@ publishing {
             pom {
                 name.set("MisarReach Kotlin SDK")
                 description.set("Official Kotlin SDK for the MisarReach developer API — coroutines, full coverage, SSE lead-job streaming")
-                url.set("https://reach.misar.io/docs/sdks/kotlin")
+                url.set("https://misarreach.com/docs/sdks/kotlin")
                 licenses {
                     license {
                         name.set("MIT License")
@@ -58,8 +58,8 @@ publishing {
                     }
                 }
                 scm {
-                    connection.set("scm:git:git://github.com/misarai/misarreach-kotlin.git")
-                    url.set("https://github.com/misarai/misarreach-kotlin")
+                    connection.set("scm:git:git://github.com/Misar-AI/misarreach-sdks.git")
+                    url.set("https://github.com/Misar-AI/misarreach-sdks")
                 }
             }
         }

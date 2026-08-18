@@ -65,11 +65,47 @@ class ReachRateLimitError(ReachAPIError):
         super().__init__(429, message, code, retry_after=retry_after, **kw)
 
 
-class ReachUpgradeRequiredError(ReachAPIError):
-    """429 with `upgrade: true` — plan upgrade required to proceed."""
+APP_ORIGIN = "https://misarreach.com"
 
-    def __init__(self, message: str = "Upgrade required", code: str = "upgrade_required", **kw: Any):
-        super().__init__(429, message, code, **kw)
+
+class ReachUpgradeRequiredError(ReachAPIError):
+    """A counted plan cap was hit.
+
+    MisarReach answers 402 with ``upgrade: true`` when a cap is reached —
+    searches, results, autopilot runs, deals, seats, channels — and names the
+    offending counter. Retrying cannot help until the cap resets or the plan
+    changes.
+
+    Distinct from the 503 ``retry: true`` the server sends when it could not
+    *check* the quota: that one is retried, so "we do not know" is never
+    mistaken for "you are over your limit".
+
+    Attributes:
+        feature: The counter that was exhausted, e.g. ``lead_searches``.
+        limit: The cap on the current plan.
+        current: Usage against that cap when the call was refused.
+        upgrade_url: Absolute URL to the billing page.
+    """
+
+    def __init__(
+        self,
+        message: str = "Upgrade required",
+        code: str = "upgrade_required",
+        status: int = 402,
+        feature: Optional[str] = None,
+        limit: Optional[int] = None,
+        current: Optional[int] = None,
+        upgrade_url: Optional[str] = None,
+        **kw: Any,
+    ):
+        self.feature = feature
+        self.limit = limit
+        self.current = current
+        # The server sends an app-relative path; make it linkable.
+        if upgrade_url and not upgrade_url.startswith(("http://", "https://")):
+            upgrade_url = APP_ORIGIN + ("" if upgrade_url.startswith("/") else "/") + upgrade_url
+        self.upgrade_url = upgrade_url
+        super().__init__(status, message, code, **kw)
 
 
 class ReachNetworkError(ReachError):

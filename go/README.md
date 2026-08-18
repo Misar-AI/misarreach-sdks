@@ -1,6 +1,6 @@
 # MisarReach Go SDK
 
-Official Go SDK for the [MisarReach](https://reach.misar.io) Developer API —
+Official Go SDK for the [MisarReach](https://misarreach.com) Developer API —
 lead finder (23 sources), multi-channel outreach, deals/pipeline CRM, autopilot,
 and the AI sales agent.
 
@@ -55,7 +55,7 @@ func main() {
 
 	// CRM
 	deal, _ := c.Deals.Create(ctx, &misarreach.CreateDealRequest{LeadEmail: "cto@acme.com", Value: 5000})
-	c.Pipeline.Move(ctx, map[string]any{"dealId": deal["id"], "stage": "interested"})
+	c.Pipeline.Move(ctx, map[string]any{"dealId": deal["id"], "newStage": "interested"})
 
 	// Channels
 	c.Channels.Status(ctx)

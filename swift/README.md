@@ -1,6 +1,6 @@
 # MisarReach Swift SDK
 
-Official Swift SDK for [MisarReach](https://reach.misar.io) — lead finder
+Official Swift SDK for [MisarReach](https://misarreach.com) — lead finder
 (23 sources), multi-channel outreach, and CRM (deals, pipeline, sales agents).
 
 Authenticates with a `mrk_` API key against `https://api.misar.io/reach/api`.
@@ -10,7 +10,7 @@ Authenticates with a `mrk_` API key against `https://api.misar.io/reach/api`.
 Swift Package Manager:
 
 ```swift
-.package(url: "https://github.com/misarai/misarreach-swift", from: "1.0.0")
+.package(url: "https://github.com/Misar-AI/misarreach-swift.git", from: "1.0.0")
 ```
 
 Then add `"MisarReach"` to your target dependencies.
@@ -23,7 +23,7 @@ import MisarReach
 let client = MisarReachClient(apiKey: "mrk_...")
 
 // Start an async lead search
-let job = try await client.leads.search(["query": "saas founders", "limit": 25])
+let job = try await client.leads.search(["query": "saas founders", "useAI": true])
 
 // Poll the job
 let status = try await client.leads.jobStatus(jobId: job["jobId"] as! String)
@@ -53,6 +53,13 @@ try await client.leads.streamJob(jobId: jobId) { event in
     }
 }
 ```
+
+> SwiftPM requires `Package.swift` at the repository root, so this SDK is
+> mirrored to its own repository. The monorepo URL will not resolve.
+
+> The standalone repository carries **no version tag yet**, so a `from:`
+> requirement cannot resolve until the first release publishes one. Until
+> then, depend on `branch: "main"`.
 
 ## Resources
 

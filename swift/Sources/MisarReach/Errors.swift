@@ -20,6 +20,24 @@ public enum MisarReachError: Error, CustomStringConvertible {
     ///   - upgrade:       `true` when the caller must upgrade their plan.
     case rateLimit(message: String, balance: Double?, freeRemaining: Int?, upgrade: Bool)
 
+    /// A counted plan cap was hit.
+    ///
+    /// MisarReach answers 402 with `upgrade: true` when a cap is reached and
+    /// names the offending counter. Retrying cannot help until the cap resets
+    /// or the plan changes.
+    ///
+    /// Distinct from the 503 `retry: true` the server sends when it could not
+    /// *check* the quota: that one is retried, so "we do not know" is never
+    /// mistaken for "you are over your limit".
+    case upgradeRequired(
+        status: Int,
+        message: String,
+        feature: String?,
+        limit: Int?,
+        current: Int?,
+        upgradeURL: String?
+    )
+
     /// A network-level error prevented the request from completing, or the
     /// maximum number of retries was exhausted.
     case networkError(message: String)
@@ -29,6 +47,7 @@ public enum MisarReachError: Error, CustomStringConvertible {
         switch self {
         case .apiError(let status, _, _): return status
         case .rateLimit:                  return 429
+        case .upgradeRequired(let status, _, _, _, _, _): return status
         case .networkError:               return 0
         }
     }
@@ -37,6 +56,11 @@ public enum MisarReachError: Error, CustomStringConvertible {
         switch self {
         case .apiError(let status, let message, let code):
             return "MisarReachError.apiError(\(status)\(code.map { ", \($0)" } ?? "")): \(message)"
+        case .upgradeRequired(let status, let message, let feature, _, _, let url):
+            var out = "MisarReachError.upgradeRequired(\(status)): \(message)"
+            if let feature { out += " [feature=\(feature)]" }
+            if let url { out += " [upgrade=\(url)]" }
+            return out
         case .rateLimit(let message, let balance, let freeRemaining, let upgrade):
             let balanceStr = balance.map { "\($0)" } ?? "nil"
             let freeStr = freeRemaining.map { "\($0)" } ?? "nil"
@@ -55,4 +79,12 @@ public struct MisarReachStreamEvent {
     public let data: [String: Any]
     /// Raw `data:` text of the event.
     public let raw: String
+}
+
+public extension MisarReachError {
+    /// The billing URL to send the user to, when this is a plan refusal.
+    var upgradeURL: String? {
+        if case let .upgradeRequired(_, _, _, _, _, url) = self { return url }
+        return nil
+    }
 }

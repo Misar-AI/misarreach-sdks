@@ -88,3 +88,4 @@ export type {
   AutopilotRunsResponse,
   AutopilotStatusResponse,
 } from "./types.js";
+export * from "./resources/plan.js";

@@ -61,7 +61,10 @@ func (c *Client) streamJob(ctx context.Context, path string) (*SSEStream, error)
 
 	s := &SSEStream{resp: resp, events: make(chan SSEEvent)}
 
-	// Job already finished: JSON snapshot instead of a stream.
+	// A job that has already finished is answered with a JSON snapshot rather
+	// than a stream. Report the terminal event the SSE path would have sent, so
+	// a caller's switch works the same whether the job finished before or during
+	// the call.
 	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -72,7 +75,11 @@ func (c *Client) streamJob(ctx context.Context, path string) (*SSEStream, error)
 			if json.Unmarshal(raw, &data) != nil {
 				data = string(raw)
 			}
-			s.events <- SSEEvent{Event: "complete", Data: data}
+			event := "complete"
+			if m, ok := data.(map[string]interface{}); ok && m["status"] == "failed" {
+				event = "error"
+			}
+			s.events <- SSEEvent{Event: event, Data: data}
 		}()
 		return s, nil
 	}

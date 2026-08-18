@@ -7,6 +7,7 @@ from misar_reach import (
     ReachAPIError,
     ReachAuthError,
     ReachRateLimitError,
+    ReachUpgradeRequiredError,
 )
 
 BASE = "https://api.misar.io/reach/api"
@@ -134,6 +135,51 @@ async def test_error_429_rate_limit():
     with pytest.raises(ReachRateLimitError) as exc:
         await client.leads.asearch({"query": "x"})
     assert exc.value.retry_after == 5
+
+
+@respx.mock
+async def test_error_402_plan_refusal_is_typed_and_not_retried():
+    """A counted cap answers 402 with upgrade:true — retrying cannot help."""
+    route = respx.post(f"{BASE}/lead-finder/search").mock(
+        return_value=httpx.Response(
+            402,
+            json={
+                "success": False,
+                "error": "Lead searches limit reached (50/50) on the Free plan.",
+                "feature": "lead_searches",
+                "limit": 50,
+                "current": 50,
+                "upgrade": True,
+                "upgrade_url": "/settings?tab=billing",
+            },
+        )
+    )
+    client = make_client(max_retries=3)
+    with pytest.raises(ReachUpgradeRequiredError) as exc:
+        await client.leads.asearch({"query": "x"})
+
+    e = exc.value
+    assert e.status == 402
+    assert e.feature == "lead_searches"
+    assert e.limit == 50
+    assert e.current == 50
+    # The server sends an app-relative path; the SDK makes it linkable.
+    assert e.upgrade_url == "https://misarreach.com/settings?tab=billing"
+    assert route.call_count == 1, "a plan refusal must not burn the retry budget"
+
+
+@respx.mock
+async def test_error_429_with_upgrade_still_recognised():
+    """Older deployments answered 429 for the same refusal."""
+    respx.post(f"{BASE}/lead-finder/search").mock(
+        return_value=httpx.Response(
+            429, json={"error": "cap reached", "upgrade": True, "feature": "deals"}
+        )
+    )
+    client = make_client(max_retries=1)
+    with pytest.raises(ReachUpgradeRequiredError) as exc:
+        await client.leads.asearch({"query": "x"})
+    assert exc.value.feature == "deals"
 
 
 @respx.mock

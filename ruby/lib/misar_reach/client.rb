@@ -468,6 +468,21 @@ module MisarReach
 
   # ── Resource: Settings ───────────────────────────────────────────────────────
 
+  # The subscription behind the API key.
+  #
+  # Read this before an expensive run rather than discovering the ceiling through
+  # an UpgradeRequiredError halfway through: a 402 says a call *was* refused,
+  # whereas +usage+ says what is left before anything is spent.
+  class PlanResource < Resource
+    # GET /plan — plan, caps, per-feature usage and the upgrade offer.
+    #
+    # A null limit means unlimited, and +remaining+ is nil with it rather than 0
+    # — 0 would read as exhausted.
+    def get
+      @client.request(:get, "/plan")
+    end
+  end
+
   class SettingsResource < Resource
     def sender_address
       @client.request(:get, "/settings/sender-address")
@@ -491,7 +506,8 @@ module MisarReach
   class Client
     attr_reader :leads, :deals, :pipeline, :channels, :autopilot, :sales_agent,
                 :campaigns, :contacts, :conversations, :workspaces, :settings, :ads,
-                :campaign_templates, :deliverability, :notifications, :webhooks
+                :campaign_templates, :deliverability, :notifications, :webhooks,
+                :plan
 
     # @param api_key [String] a reach developer key (`mrk_...`)
     def initialize(api_key:, base_url: BASE_URL, timeout: 30, max_retries: 3)
@@ -513,6 +529,7 @@ module MisarReach
       @conversations = ConversationsResource.new(self)
       @workspaces    = WorkspacesResource.new(self)
       @settings      = SettingsResource.new(self)
+      @plan          = PlanResource.new(self)
       @ads           = AdsResource.new(self)
       @campaign_templates = CampaignTemplatesResource.new(self)
       @deliverability     = DeliverabilityResource.new(self)
@@ -568,6 +585,24 @@ module MisarReach
       http.request(req) do |resp|
         status = resp.code.to_i
         raise_for_status(status, resp.body) if status >= 400
+
+        # The route does not always stream. A job that has already finished is
+        # answered with a JSON snapshot, because there is nothing left to
+        # stream. Parsing that as SSE finds no frames and returns silently, so
+        # the caller would see nothing rather than the outcome. Synthesise the
+        # terminal event the SSE path would have sent.
+        unless resp["content-type"].to_s.include?("text/event-stream")
+          body = +""
+          resp.read_body { |chunk| body << chunk }
+          snapshot = begin
+            JSON.parse(body)
+          rescue JSON::ParserError
+            body
+          end
+          name = snapshot.is_a?(Hash) && snapshot["status"] == "failed" ? "error" : "complete"
+          block.call({ event: name, data: snapshot })
+          return nil
+        end
 
         buffer = +""
         resp.read_body do |chunk|
@@ -646,9 +681,16 @@ module MisarReach
       case status
       when 401, 403
         raise AuthError.new(msg, status: status, code: code, body: h)
+      when 402
+        # A counted cap answers 402 with `upgrade: true` (reach-gate.rb contract).
+        # This branch did not exist, so every real refusal fell through to the
+        # generic ApiError.
+        raise UpgradeRequiredError.new(msg, code: code, body: h)
+
       when 404
         raise NotFoundError.new(msg, code: code, body: h)
       when 429
+        # 429 with `upgrade` is the legacy shape; the server now answers 402.
         if h["upgrade"]
           raise UpgradeRequiredError.new(msg, code: code, body: h)
         end

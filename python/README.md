@@ -1,6 +1,6 @@
 # MisarReach Python SDK
 
-Official Python SDK for the [MisarReach](https://reach.misar.io) Developer API —
+Official Python SDK for the [MisarReach](https://misarreach.com) Developer API —
 lead finder (23 sources), multi-channel outreach, deals/pipeline CRM, autopilot,
 and the AI sales agent.
 
@@ -35,7 +35,7 @@ leads = client.leads.list(page=1, limit=50)
 # CRM
 deal = client.deals.create({"leadEmail": "cto@acme.com", "value": 5000})
 board = client.pipeline.get()
-client.pipeline.move({"dealId": deal["id"], "stage": "interested"})
+client.pipeline.move({"dealId": deal["id"], "newStage": "interested"})
 
 # Channels
 client.channels.status()

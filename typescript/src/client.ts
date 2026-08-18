@@ -4,6 +4,8 @@ import {
   AuthError,
   NotFoundError,
   UpgradeRequiredError,
+  errorFromPayload,
+  type ErrorPayload,
 } from "./errors.js";
 import { LeadsResource } from "./resources/leads.js";
 import { DealsResource } from "./resources/deals.js";
@@ -21,6 +23,7 @@ import { WorkspacesResource } from "./resources/workspaces.js";
 import { SettingsResource } from "./resources/settings.js";
 import { AdsResource } from "./resources/ads.js";
 import { LeadFinderResource } from "./resources/leadFinder.js";
+import { PlanResource } from "./resources/plan.js";
 
 export interface MisarReachClientOptions {
   /** Override the default base URL (https://api.misar.io/reach/api). */
@@ -51,35 +54,22 @@ export class MisarReachClient {
 
     if (res.ok) return res.json() as Promise<T>;
 
-    let payload: {
-      error?: string;
-      balance?: number;
-      freeRemaining?: number;
-      upgrade?: boolean;
-    } = {};
+    let payload: ErrorPayload = {};
     try {
-      payload = (await res.json()) as typeof payload;
+      payload = (await res.json()) as ErrorPayload;
     } catch {
       payload = { error: res.statusText };
     }
 
-    const msg = payload.error ?? res.statusText;
-
-    switch (res.status) {
-      case 401:
-      case 403:
-        throw new AuthError(msg);
-      case 404:
-        throw new NotFoundError(msg);
-      case 429:
-        if (payload.upgrade) throw new UpgradeRequiredError(msg);
-        throw new RateLimitError(msg, payload.balance, payload.freeRemaining);
-      default:
-        throw new MisarReachError(msg, res.status);
-    }
+    throw errorFromPayload(res.status, payload, res.statusText);
   }
 
   // ── Resource accessors ───────────────────────────────────────────────────────
+
+  /** Live subscription standing for this key: caps, usage and the upgrade offer. */
+  get plan(): PlanResource {
+    return new PlanResource(this.request.bind(this));
+  }
 
   get leads(): LeadsResource {
     return new LeadsResource(this.request.bind(this));

@@ -1,6 +1,6 @@
 # MisarReach Kotlin SDK
 
-Official Kotlin client for the [MisarReach](https://reach.misar.io) developer API
+Official Kotlin client for the [MisarReach](https://misarreach.com) developer API
 (`https://api.misar.io/reach/api`), built on coroutines. Full coverage of Lead
 Finder, deals & pipeline, multi-channel outreach, autopilot, sales agent,
 campaigns, contacts, conversations, workspaces, settings and ads — plus the SSE
@@ -46,7 +46,7 @@ val status = client.channels.status()
 ```kotlin
 val client = MisarReachClient(
     apiKey = "mrk_...",
-    baseUrl = "https://reach.misar.io/api",
+    baseUrl = "https://api.misar.io/reach/api",
     maxRetries = 5,
 )
 ```

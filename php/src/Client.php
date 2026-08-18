@@ -4,610 +4,6 @@ declare(strict_types=1);
 
 namespace MisarReach;
 
-// ── Resource: Lead Finder ─────────────────────────────────────────────────────
-
-class LeadsResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function account(): array
-    {
-        return $this->client->request('GET', '/lead-finder/account');
-    }
-
-    public function config(): array
-    {
-        return $this->client->request('GET', '/lead-finder/config');
-    }
-
-    public function list(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/lead-finder/leads{$qs}");
-    }
-
-    public function export(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/lead-finder/export{$qs}");
-    }
-
-    public function search(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/search', $data);
-    }
-
-    public function discoverCompanies(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/discover', $data);
-    }
-
-    public function enrich(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/enrich', $data);
-    }
-
-    public function verifyEmails(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/verify', $data);
-    }
-
-    public function score(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/score', $data);
-    }
-
-    public function jobStatus(string $jobId): array
-    {
-        return $this->client->request('GET', "/lead-finder/jobs/{$jobId}");
-    }
-
-    public function submitFeedback(string $jobId, array $data): array
-    {
-        return $this->client->request('POST', "/lead-finder/jobs/{$jobId}/feedback", $data);
-    }
-
-    /**
-     * GET /lead-finder/jobs/{jobId}/stream — Server-Sent Events live progress.
-     * Invokes $onEvent(string $event, array $data, string $raw) for each event.
-     */
-    public function streamJob(string $jobId, callable $onEvent): void
-    {
-        $this->client->stream("/lead-finder/jobs/{$jobId}/stream", $onEvent);
-    }
-
-    public function listLeadLists(): array
-    {
-        return $this->client->request('GET', '/lead-finder/lists');
-    }
-
-    public function createLeadList(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/lists', $data);
-    }
-
-    public function syncLeadList(string $listId, array $data = []): array
-    {
-        return $this->client->request('POST', "/lead-finder/lists/{$listId}/sync", $data);
-    }
-
-    public function savedSearches(): array
-    {
-        return $this->client->request('GET', '/lead-finder/saved-searches');
-    }
-
-    public function createSavedSearch(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/saved-searches', $data);
-    }
-
-    public function deleteSavedSearch(string $id): array
-    {
-        return $this->client->request('DELETE', "/lead-finder/saved-searches/{$id}");
-    }
-
-    public function scoringRules(): array
-    {
-        return $this->client->request('GET', '/lead-finder/scoring-rules');
-    }
-
-    public function createScoringRule(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/scoring-rules', $data);
-    }
-
-    public function updateScoringRule(string $id, array $data): array
-    {
-        return $this->client->request('PATCH', "/lead-finder/scoring-rules/{$id}", $data);
-    }
-
-    public function deleteScoringRule(string $id): array
-    {
-        return $this->client->request('DELETE', "/lead-finder/scoring-rules/{$id}");
-    }
-
-    public function recommendations(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/lead-finder/recommendations{$qs}");
-    }
-
-    public function searchHistory(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/lead-finder/search-history{$qs}");
-    }
-
-    public function previewMessage(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/preview-message', $data);
-    }
-
-    public function sendToCampaign(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/send-to-campaign', $data);
-    }
-
-    public function addToSegment(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/add-to-segment', $data);
-    }
-
-    public function company(string $domain): array
-    {
-        return $this->client->request('GET', '/lead-finder/companies/' . rawurlencode($domain));
-    }
-
-    public function companyPeople(string $domain, array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', '/lead-finder/companies/' . rawurlencode($domain) . "/people{$qs}");
-    }
-}
-
-// ── Resource: Ads ─────────────────────────────────────────────────────────────
-
-class AdsResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function linkedinCompanyAudience(array $data): array
-    {
-        return $this->client->request('POST', '/ads/linkedin/company-audience', $data);
-    }
-}
-
-// ── Resource: Autopilot ───────────────────────────────────────────────────────
-
-class AutopilotResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function runs(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/autopilot/runs{$qs}");
-    }
-
-    public function start(array $data): array
-    {
-        return $this->client->request('POST', '/autopilot/start', $data);
-    }
-
-    public function get(string $id): array
-    {
-        return $this->client->request('GET', "/autopilot/{$id}");
-    }
-
-    public function status(string $id): array
-    {
-        return $this->client->request('GET', "/autopilot/{$id}/status");
-    }
-
-    public function setStatus(string $id, array $data): array
-    {
-        return $this->client->request('POST', "/autopilot/{$id}/status", $data);
-    }
-}
-
-// ── Resource: Campaigns ───────────────────────────────────────────────────────
-
-class CampaignsResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function list(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/campaigns{$qs}");
-    }
-
-    public function create(array $data): array
-    {
-        return $this->client->request('POST', '/campaigns', $data);
-    }
-
-    public function get(string $id): array
-    {
-        return $this->client->request('GET', "/campaigns/{$id}");
-    }
-
-    public function update(string $id, array $data): array
-    {
-        return $this->client->request('PATCH', "/campaigns/{$id}", $data);
-    }
-
-    public function delete(string $id): array
-    {
-        return $this->client->request('DELETE', "/campaigns/{$id}");
-    }
-
-    public function enqueue(string $id, array $data = []): array
-    {
-        return $this->client->request('POST', "/campaigns/{$id}/enqueue", $data);
-    }
-}
-
-// ── Resource: Channels ────────────────────────────────────────────────────────
-
-class ChannelsResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function status(): array
-    {
-        return $this->client->request('GET', '/channels/status');
-    }
-
-    public function updateStatus(array $data): array
-    {
-        return $this->client->request('PATCH', '/channels/status', $data);
-    }
-
-    public function optInLinks(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/channels/opt-in-links{$qs}");
-    }
-
-    public function connectSms(array $data): array
-    {
-        return $this->client->request('POST', '/channels/sms/connect', $data);
-    }
-
-    public function connectWhatsapp(array $data): array
-    {
-        return $this->client->request('POST', '/channels/whatsapp/connect', $data);
-    }
-
-    public function connectTelegram(array $data): array
-    {
-        return $this->client->request('POST', '/channels/telegram/connect', $data);
-    }
-
-    public function connectTwitter(array $data): array
-    {
-        return $this->client->request('POST', '/channels/twitter/connect', $data);
-    }
-
-    public function connectInstagram(array $data): array
-    {
-        return $this->client->request('POST', '/channels/instagram/connect', $data);
-    }
-
-    public function connectFacebook(array $data): array
-    {
-        return $this->client->request('POST', '/channels/facebook/connect', $data);
-    }
-
-    public function connectDiscord(array $data): array
-    {
-        return $this->client->request('POST', '/channels/discord/connect', $data);
-    }
-
-    public function subscribePush(array $data): array
-    {
-        return $this->client->request('POST', '/channels/push/subscribe', $data);
-    }
-
-    public function unsubscribePush(): array
-    {
-        return $this->client->request('DELETE', '/channels/push/subscribe');
-    }
-}
-
-// ── Resource: Contacts ────────────────────────────────────────────────────────
-
-class ContactsResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function list(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/contacts{$qs}");
-    }
-
-    public function create(array $data): array
-    {
-        return $this->client->request('POST', '/contacts', $data);
-    }
-
-    public function get(string $id): array
-    {
-        return $this->client->request('GET', "/contacts/{$id}");
-    }
-
-    public function update(string $id, array $data): array
-    {
-        return $this->client->request('PATCH', "/contacts/{$id}", $data);
-    }
-
-    public function delete(string $id): array
-    {
-        return $this->client->request('DELETE', "/contacts/{$id}");
-    }
-
-    public function bulk(array $data): array
-    {
-        return $this->client->request('POST', '/contacts/bulk', $data);
-    }
-
-    public function import(array $data): array
-    {
-        return $this->client->request('POST', '/contacts/import', $data);
-    }
-
-    public function segments(): array
-    {
-        return $this->client->request('GET', '/contacts/segments');
-    }
-
-    public function stats(): array
-    {
-        return $this->client->request('GET', '/contacts/stats');
-    }
-}
-
-// ── Resource: Conversations ───────────────────────────────────────────────────
-
-class ConversationsResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function list(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/conversations{$qs}");
-    }
-
-    public function get(string $email): array
-    {
-        return $this->client->request('GET', '/conversations/' . rawurlencode($email));
-    }
-
-    public function reply(string $email, array $data): array
-    {
-        return $this->client->request('POST', '/conversations/' . rawurlencode($email) . '/reply', $data);
-    }
-}
-
-class CampaignTemplatesResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function list(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/campaign-templates{$qs}");
-    }
-
-    public function create(array $data): array
-    {
-        return $this->client->request('POST', '/campaign-templates', $data);
-    }
-}
-
-class DeliverabilityResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    /**
-     * Sender health. `bounceRate` and `complaintRate` are null when there is not
-     * enough volume to judge — which is not the same as zero.
-     */
-    public function get(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/deliverability{$qs}");
-    }
-}
-
-class NotificationsResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function list(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/notifications{$qs}");
-    }
-
-    /** Mark notifications read. Pass `['ids' => [...]]` or `['all' => true]`. */
-    public function markRead(array $data): array
-    {
-        return $this->client->request('PATCH', '/notifications', $data);
-    }
-}
-
-class WebhooksResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function list(): array
-    {
-        return $this->client->request('GET', '/webhooks/endpoints');
-    }
-
-    /**
-     * Register an endpoint. The response carries the signing secret exactly
-     * once — store it then; it is not retrievable afterwards.
-     */
-    public function create(array $data): array
-    {
-        return $this->client->request('POST', '/webhooks/endpoints', $data);
-    }
-}
-
-// ── Resource: Deals ───────────────────────────────────────────────────────────
-
-class DealsResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function list(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/deals{$qs}");
-    }
-
-    public function create(array $data): array
-    {
-        return $this->client->request('POST', '/deals', $data);
-    }
-
-    public function update(string $id, array $data): array
-    {
-        return $this->client->request('PATCH', "/deals/{$id}", $data);
-    }
-
-    public function delete(string $id): array
-    {
-        return $this->client->request('DELETE', "/deals/{$id}");
-    }
-
-    public function activity(string $id): array
-    {
-        return $this->client->request('GET', "/deals/{$id}/activity");
-    }
-
-    public function suggestions(string $id): array
-    {
-        return $this->client->request('GET', "/deals/{$id}/suggestions");
-    }
-
-    /**
-     * Apply one operation to many deals at once —
-     * `['ids' => [...], 'op' => 'tag'|'untag'|'stage'|'delete', ...]`. Tag writes
-     * are applied atomically server-side, so concurrent callers cannot lose a tag.
-     */
-    public function bulk(array $data): array
-    {
-        return $this->client->request('POST', '/deals/bulk', $data);
-    }
-}
-
-// ── Resource: Pipeline ────────────────────────────────────────────────────────
-
-class PipelineResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function get(): array
-    {
-        return $this->client->request('GET', '/pipeline');
-    }
-
-    public function create(array $data): array
-    {
-        return $this->client->request('POST', '/pipeline', $data);
-    }
-}
-
-// ── Resource: Sales Agent ─────────────────────────────────────────────────────
-
-class SalesAgentResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function actions(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/sales-agent/actions{$qs}");
-    }
-
-    public function config(): array
-    {
-        return $this->client->request('GET', '/sales-agent/config');
-    }
-
-    public function updateConfig(array $data): array
-    {
-        return $this->client->request('PATCH', '/sales-agent/config', $data);
-    }
-
-    public function conversations(array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('GET', "/sales-agent/conversations{$qs}");
-    }
-
-    public function process(array $data): array
-    {
-        return $this->client->request('POST', '/sales-agent/process', $data);
-    }
-}
-
-// ── Resource: Settings ────────────────────────────────────────────────────────
-
-class SettingsResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function senderAddress(): array
-    {
-        return $this->client->request('GET', '/settings/sender-address');
-    }
-
-    public function setSenderAddress(array $data): array
-    {
-        return $this->client->request('PUT', '/settings/sender-address', $data);
-    }
-}
-
-// ── Resource: Workspaces ──────────────────────────────────────────────────────
-
-class WorkspacesResource
-{
-    public function __construct(private readonly Client $client) {}
-
-    public function list(): array
-    {
-        return $this->client->request('GET', '/workspaces');
-    }
-
-    public function create(array $data): array
-    {
-        return $this->client->request('POST', '/workspaces', $data);
-    }
-
-    public function listMembers(string $id): array
-    {
-        return $this->client->request('GET', "/workspaces/{$id}/members");
-    }
-
-    public function addMember(string $id, array $data): array
-    {
-        return $this->client->request('POST', "/workspaces/{$id}/members", $data);
-    }
-
-    public function removeMember(string $id, array $params = []): array
-    {
-        $qs = $params ? '?' . http_build_query($params) : '';
-        return $this->client->request('DELETE', "/workspaces/{$id}/members{$qs}");
-    }
-}
-
 // ── Main Client ───────────────────────────────────────────────────────────────
 
 /**
@@ -632,6 +28,7 @@ class Client
     public readonly PipelineResource      $pipeline;
     public readonly SalesAgentResource    $salesAgent;
     public readonly SettingsResource      $settings;
+    public readonly PlanResource          $plan;
     public readonly WorkspacesResource    $workspaces;
     public readonly CampaignTemplatesResource $campaignTemplates;
     public readonly DeliverabilityResource    $deliverability;
@@ -672,6 +69,7 @@ class Client
         $this->pipeline      = new PipelineResource($this);
         $this->salesAgent    = new SalesAgentResource($this);
         $this->settings      = new SettingsResource($this);
+        $this->plan = new PlanResource($this);
         $this->workspaces    = new WorkspacesResource($this);
         $this->campaignTemplates = new CampaignTemplatesResource($this);
         $this->deliverability    = new DeliverabilityResource($this);
@@ -778,9 +176,38 @@ class Client
     /**
      * Maps a non-2xx response body into the appropriate {@see ApiError} subclass.
      */
+    /**
+     * The server returns upgrade_url app-relative (/settings?tab=billing);
+     * resolve it against the app origin so callers can link to it.
+     */
+    private static function absoluteUpgradeUrl(?string $path): ?string
+    {
+        if ($path === null || $path === '') {
+            return null;
+        }
+        if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+            return $path;
+        }
+
+        return 'https://misarreach.com' . (str_starts_with($path, '/') ? $path : '/' . $path);
+    }
+
     private function mapError(int $status, array $decoded, string $rawBody): ApiError
     {
         $message = $decoded['error'] ?? $decoded['message'] ?? ($rawBody !== '' ? $rawBody : "HTTP {$status}");
+
+        // A counted cap answers 402 with `upgrade: true`. Only 429 was
+        // inspected before, so every real refusal became a generic ApiError.
+        if (($decoded['upgrade'] ?? false) === true && ($status === 402 || $status === 429)) {
+            return new UpgradeRequiredError(
+                $message,
+                $status,
+                isset($decoded['feature']) ? (string) $decoded['feature'] : null,
+                isset($decoded['limit']) ? (int) $decoded['limit'] : null,
+                isset($decoded['current']) ? (int) $decoded['current'] : null,
+                self::absoluteUpgradeUrl($decoded['upgrade_url'] ?? null),
+            );
+        }
 
         return match (true) {
             $status === 401 || $status === 403 => new AuthError($message, $status),
@@ -798,7 +225,8 @@ class Client
     /**
      * Opens a Server-Sent Events stream and invokes $onEvent for each event
      * until the stream terminates. If the endpoint returns a plain JSON snapshot
-     * (job already finished), a single synthetic `snapshot` event is delivered.
+     * (job already finished), a single synthetic `complete` event is delivered —
+     * or `error` when the job failed.
      *
      * @param callable(string $event, array $data, string $raw): void $onEvent
      * @throws NetworkError
@@ -835,11 +263,11 @@ class Client
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_TIMEOUT        => 0,
             CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_WRITEFUNCTION  => function ($ch, string $chunk) use (
-                &$buffer, &$eventName, &$dataLines, &$isStream, $ch, $dispatch, $onEvent
+            CURLOPT_WRITEFUNCTION  => function ($handle, string $chunk) use (
+                &$buffer, &$eventName, &$dataLines, &$isStream, $dispatch, $onEvent
             ): int {
                 if ($isStream === null) {
-                    $ct = curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?: '';
+                    $ct = curl_getinfo($handle, CURLINFO_CONTENT_TYPE) ?: '';
                     $isStream = str_contains(strtolower($ct), 'text/event-stream');
                 }
                 $buffer .= $chunk;
@@ -883,7 +311,15 @@ class Client
 
         if ($isStream === false) {
             $decoded = json_decode($buffer, true);
-            $onEvent('snapshot', is_array($decoded) ? $decoded : [], $buffer);
+            // Report the terminal event the SSE path would have sent, rather
+            // than a name the server never uses, so a caller's switch works the
+            // same whether the job finished before or during the call.
+            $snapshot = is_array($decoded) ? $decoded : [];
+            $onEvent(
+                ($snapshot['status'] ?? null) === 'failed' ? 'error' : 'complete',
+                $snapshot,
+                $buffer,
+            );
             return;
         }
 

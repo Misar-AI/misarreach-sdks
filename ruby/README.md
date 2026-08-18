@@ -1,6 +1,6 @@
 # MisarReach Ruby SDK
 
-Official Ruby client for the [MisarReach](https://reach.misar.io) developer API —
+Official Ruby client for the [MisarReach](https://misarreach.com) developer API —
 lead finder (23 sources), multi-channel outreach, CRM (deals + pipeline),
 autopilot, and the AI sales agent.
 
@@ -41,7 +41,7 @@ reach.leads.stream_job(job["jobId"]) do |evt|
 end
 
 # CRM
-deal = reach.deals.create(title: "Acme expansion", value: 12_000, stage: "qualified")
+deal = reach.deals.create(leadEmail: "cto@acme.com", leadName: "Acme CTO", value: 12_000)
 reach.pipeline.get
 reach.deals.suggestions(deal["id"])
 

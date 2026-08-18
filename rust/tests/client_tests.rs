@@ -134,16 +134,17 @@ async fn retry_503_then_success() {
 async fn lead_job_sse_stream() {
     let server = MockServer::start().await;
 
-    let sse_body = "data: {\"status\":\"running\",\"progress\":10}\n\n\
-data: {\"status\":\"running\",\"progress\":100}\n\n\
-data: [DONE]\n\n";
+    // MisarReach names its events and sends `: keepalive` every 20s. It does
+    // not send a [DONE] sentinel — the stream ends when the server closes it.
+    let sse_body = "event: progress\ndata: {\"message\":\"searching\"}\n\n\
+: keepalive\n\n\
+event: found\ndata: {\"total\":12}\n\n\
+event: complete\ndata: {\"total_found\":12}\n\n";
 
     Mock::given(method("GET"))
         .and(path("/lead-finder/jobs/job_1/stream"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "text/event-stream")
-                .set_body_string(sse_body),
+            ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"),
         )
         .mount(&server)
         .await;
@@ -159,7 +160,112 @@ data: [DONE]\n\n";
         .expect("stream failed");
 
     let collected = events.lock().unwrap();
-    assert_eq!(collected.len(), 2);
-    assert_eq!(collected[0]["progress"], 10);
-    assert_eq!(collected[1]["progress"], 100);
+    let names: Vec<&str> = collected.iter().map(|e| e.event.as_str()).collect();
+
+    // The keepalive comment must not surface as an event.
+    assert_eq!(names, vec!["progress", "found", "complete"]);
+    assert_eq!(collected[1].data["total"], 12);
+}
+
+#[tokio::test]
+async fn lead_job_stream_reports_an_already_finished_job() {
+    let server = MockServer::start().await;
+
+    // A finished job is answered with a JSON snapshot rather than a stream.
+    // Parsed as SSE this yields nothing, so the caller could not tell a
+    // finished job from a silent one.
+    Mock::given(method("GET"))
+        .and(path("/lead-finder/jobs/job_done/stream"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(r#"{"status":"done","total_found":42,"error":null}"#, "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+
+    client
+        .leads
+        .stream("job_done", move |ev| sink.lock().unwrap().push(ev))
+        .await
+        .expect("stream failed");
+
+    let collected = events.lock().unwrap();
+    assert_eq!(collected.len(), 1);
+    assert_eq!(collected[0].event, "complete");
+    assert_eq!(collected[0].data["total_found"], 42);
+}
+
+#[tokio::test]
+async fn lead_job_stream_reports_a_failed_job_as_error() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/lead-finder/jobs/job_bad/stream"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(r#"{"status":"failed","error":"no sources reachable"}"#, "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+
+    client
+        .leads
+        .stream("job_bad", move |ev| sink.lock().unwrap().push(ev))
+        .await
+        .expect("stream failed");
+
+    let collected = events.lock().unwrap();
+    assert_eq!(collected[0].event, "error");
+}
+
+#[tokio::test]
+async fn lead_job_stream_refusal_is_typed() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/lead-finder/jobs/job_1/stream"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(
+            r#"{"error":"monthly lead searches used up","upgrade":true,
+                "feature":"lead_searches","limit":50,"current":50,
+                "upgrade_url":"/settings?tab=billing"}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server);
+    let err = client
+        .leads
+        .stream("job_1", |_| {})
+        .await
+        .expect_err("expected a refusal");
+
+    // A plan refusal on the stream must be the same typed error the JSON
+    // helper raises, not a generic Api error.
+    match err {
+        misarreach::ReachError::UpgradeRequired {
+            status,
+            ref feature,
+            limit,
+            current,
+            ref upgrade_url,
+            ..
+        } => {
+            assert_eq!(status, 402);
+            assert_eq!(feature.as_deref(), Some("lead_searches"));
+            assert_eq!(limit, Some(50));
+            assert_eq!(current, Some(50));
+            // The server sends it app-relative; the SDK resolves it.
+            assert_eq!(
+                upgrade_url.as_deref(),
+                Some("https://misarreach.com/settings?tab=billing")
+            );
+        }
+        other => panic!("expected UpgradeRequired, got {other:?}"),
+    }
 }

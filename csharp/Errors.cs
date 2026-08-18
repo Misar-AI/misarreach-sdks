@@ -56,12 +56,46 @@ public class RateLimitException : MisarReachException
 }
 
 /// <summary>
-/// Thrown for HTTP 429 responses that require the caller to upgrade their plan
-/// (<c>upgrade: true</c> in the response body).
+/// Thrown when a counted plan cap is hit.
 /// </summary>
+/// <remarks>
+/// MisarReach answers 402 with <c>upgrade: true</c> when a cap is reached —
+/// searches, results, autopilot runs, deals, seats, channels — and names the
+/// offending counter. Retrying cannot help until the cap resets or the plan
+/// changes.
+///
+/// Distinct from the 503 <c>retry: true</c> the server sends when it could not
+/// <em>check</em> the quota: that one is retried, so "we do not know" is never
+/// mistaken for "you are over your limit".
+/// </remarks>
 public sealed class UpgradeRequiredException : MisarReachException
 {
-    public UpgradeRequiredException(string message) : base(429, message, "upgrade_required") { }
+    /// <summary>The counter that was exhausted, e.g. <c>lead_searches</c>.</summary>
+    public string? Feature { get; }
+
+    /// <summary>The cap on the current plan.</summary>
+    public int? Limit { get; }
+
+    /// <summary>Usage against that cap when the call was refused.</summary>
+    public int? Current { get; }
+
+    /// <summary>Absolute URL to the billing page.</summary>
+    public string? UpgradeUrl { get; }
+
+    public UpgradeRequiredException(
+        string message,
+        int status = 402,
+        string? feature = null,
+        int? limit = null,
+        int? current = null,
+        string? upgradeUrl = null)
+        : base(status, message, "upgrade_required")
+    {
+        Feature = feature;
+        Limit = limit;
+        Current = current;
+        UpgradeUrl = upgradeUrl;
+    }
 }
 
 /// <summary>

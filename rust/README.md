@@ -1,6 +1,6 @@
 # MisarReach Rust SDK
 
-Official async Rust client for the [MisarReach](https://reach.misar.io) developer
+Official async Rust client for the [MisarReach](https://misarreach.com) developer
 API (`https://api.misar.io/reach/api`). Full coverage of Lead Finder, deals &
 pipeline, multi-channel outreach, autopilot, sales agent, campaigns, contacts,
 conversations, workspaces, settings and ads — plus the SSE lead-job stream.
@@ -49,7 +49,7 @@ async fn main() -> Result<(), misarreach::ReachError> {
 
 ```rust
 let client = misarreach::MisarReachClient::new("mrk_...")
-    .with_base_url("https://reach.misar.io/api")
+    .with_base_url("https://api.misar.io/reach/api")
     .with_max_retries(5);
 ```
 

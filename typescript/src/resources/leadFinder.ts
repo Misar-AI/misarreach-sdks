@@ -1,4 +1,9 @@
 import type { JsonObject } from "../types.js";
+import {
+  MisarReachError,
+  errorFromPayload,
+  type ErrorPayload,
+} from "../errors.js";
 type Requester = <T>(method: string, path: string, body?: unknown) => Promise<T>;
 
 /**
@@ -108,7 +113,7 @@ export class LeadFinderResource {
   async *stream(
     jobId: string,
     options?: { signal?: AbortSignal },
-  ): AsyncGenerator<{ event: string; data: unknown }, void, unknown> {
+  ): AsyncGenerator<LeadFinderStreamEvent, void, unknown> {
     const res = await fetch(
       `${this.baseUrl}/lead-finder/jobs/${encodeURIComponent(jobId)}/stream`,
       {
@@ -116,9 +121,35 @@ export class LeadFinderResource {
         signal: options?.signal,
       },
     );
-    if (!res.ok || !res.body) {
-      throw new Error(`lead-finder stream failed: HTTP ${res.status}`);
+
+    if (!res.ok) {
+      let payload: ErrorPayload = {};
+      try {
+        payload = (await res.json()) as ErrorPayload;
+      } catch {
+        payload = { error: res.statusText };
+      }
+      // The same typed errors the JSON helper raises — a plan refusal on the
+      // stream must not arrive as a bare Error.
+      throw errorFromPayload(res.status, payload, res.statusText);
     }
+
+    // A job that has already finished is answered with a JSON snapshot rather
+    // than a stream, because there is nothing left to stream. Parsing that as
+    // SSE finds no frames and completes silently, so the caller sees nothing
+    // instead of the outcome. Synthesise the terminal frame the SSE path would
+    // have sent, so both answers look the same to the caller.
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.includes("text/event-stream")) {
+      const snapshot = (await res.json()) as { status?: string } & Record<string, unknown>;
+      yield {
+        event: snapshot.status === "failed" ? "error" : "complete",
+        data: snapshot,
+      };
+      return;
+    }
+
+    if (!res.body) throw new MisarReachError("stream had no body", res.status);
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -130,27 +161,70 @@ export class LeadFinderResource {
         buf += decoder.decode(value, { stream: true });
         // SSE frames are separated by a blank line; a frame can span reads, so
         // only complete frames are emitted and the remainder stays buffered.
-        let idx: number;
-        while ((idx = buf.indexOf("\n\n")) !== -1) {
+        for (;;) {
+          const idx = frameEnd(buf);
+          if (idx === -1) break;
           const frame = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          let event = "message";
-          const dataLines: string[] = [];
-          for (const line of frame.split("\n")) {
-            if (line.startsWith("event:")) event = line.slice(6).trim();
-            else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
-          }
-          if (!dataLines.length) continue;
-          const raw = dataLines.join("\n");
-          let data: unknown = raw;
-          try { data = JSON.parse(raw); } catch { /* a non-JSON frame is yielded as text */ }
-          yield { event, data };
+          buf = buf.slice(idx).replace(/^(\r?\n){1,2}/, "");
+          const parsed = parseFrame(frame);
+          if (parsed) yield parsed;
         }
       }
+      const tail = parseFrame(buf);
+      if (tail) yield tail;
     } finally {
       // Releasing the lock matters on early break: without it the response body
       // stays locked and the connection is never returned to the pool.
       reader.releaseLock();
     }
+  }
+}
+
+/** One frame from the lead-finder progress stream. */
+export interface LeadFinderStreamEvent {
+  /**
+   * The server's `event:` name. The route emits `progress`, `found`,
+   * `complete`, `error` and `timeout`; `message` is the SSE default when a
+   * frame carries no name.
+   */
+  event: string;
+  data: unknown;
+}
+
+/** Index of the blank line ending the first complete frame, or -1. */
+function frameEnd(buf: string): number {
+  const lf = buf.indexOf("\n\n");
+  const crlf = buf.indexOf("\r\n\r\n");
+  if (lf === -1) return crlf;
+  if (crlf === -1) return lf;
+  return Math.min(lf, crlf);
+}
+
+/**
+ * Parses one frame, or null for a keepalive comment or a frame with no data.
+ * The route sends `: keepalive` every 20 seconds to hold the connection open.
+ */
+function parseFrame(frame: string): LeadFinderStreamEvent | null {
+  let event = "message";
+  const dataLines: string[] = [];
+
+  for (const line of frame.split(/\r?\n/)) {
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    // SSE strips exactly one space after the colon, not a run of whitespace:
+    // trailing spaces can be significant inside a payload.
+    else if (line.startsWith("data:")) {
+      const rest = line.slice(5);
+      dataLines.push(rest.startsWith(" ") ? rest.slice(1) : rest);
+    }
+  }
+
+  if (!dataLines.length) return null;
+
+  const raw = dataLines.join("\n");
+  try {
+    return { event, data: JSON.parse(raw) };
+  } catch {
+    return { event, data: raw };  // a non-JSON frame is yielded as text
   }
 }

@@ -53,6 +53,7 @@ class MisarReachClient(
     val conversations = ConversationsResource()
     val workspaces = WorkspacesResource()
     val settings = SettingsResource()
+    val plan = PlanResource()
     val ads = AdsResource()
     val campaignTemplates = CampaignTemplatesResource()
     val deliverability = DeliverabilityResource()
@@ -114,6 +115,11 @@ class MisarReachClient(
 
             val status = response.statusCode()
 
+            // A 429 rate limit and a 429 plan refusal are identical by status;
+            // only the first is worth retrying. The server's 503 retry:true
+            // carries no upgrade flag, so "could not check" still retries.
+            upgradeRefusal(status, response.body())?.let { throw it }
+
             if (status in RETRYABLE && attempt < maxRetries - 1) {
                 lastException = MisarReachException(status, response.body() ?: "retryable error")
                 return@repeat
@@ -135,10 +141,18 @@ class MisarReachClient(
         requestUrl(method, "$normalizedBase$path", body)
 
     /**
-     * Open a Server-Sent Events stream. Emits one map per JSON `data:` frame
-     * until the stream closes or a `[DONE]` sentinel arrives.
+     * Opens the SSE stream and emits one [ReachSseEvent] per frame.
+     *
+     * MisarReach names its events — `progress`, `found`, `complete`, `error`
+     * and `timeout` — so the name is carried through rather than discarded;
+     * without it a caller cannot tell completion from progress. Frames end at a
+     * blank line and may span several `data:` lines, and `: keepalive` comments
+     * (sent every 20s) are skipped.
+     *
+     * Deliberately not retried: replaying a stream that failed mid-flight would
+     * duplicate whatever the caller already consumed.
      */
-    private fun sse(path: String): Flow<Map<String, Any>> = flow {
+    private fun sse(path: String): Flow<ReachSseEvent> = flow {
         val request = HttpRequest.newBuilder()
             .uri(URI.create("$normalizedBase$path"))
             .header("Authorization", "Bearer $apiKey")
@@ -146,25 +160,85 @@ class MisarReachClient(
             .GET()
             .build()
 
-        val response = http.send(request, HttpResponse.BodyHandlers.ofLines())
+        val response = http.send(request, HttpResponse.BodyHandlers.ofInputStream())
         val status = response.statusCode()
+
         if (status !in 200..299) {
-            throw MisarReachException(status, "stream request failed")
+            val body = response.body().use { it.readBytes().decodeToString() }
+            upgradeRefusal(status, body)?.let { throw it }
+            // The message the server sent, rather than a fixed string.
+            throw MisarReachException(status, extractMessage(body))
         }
 
-        response.body().use { lines ->
-            for (line in lines) {
-                val trimmed = line?.trim() ?: continue
-                if (!trimmed.startsWith("data:")) continue
-                val data = trimmed.removePrefix("data:").trim()
-                if (data.isEmpty()) continue
-                if (data == "[DONE]") break
-                runCatching { mapper.readValue<Map<String, Any>>(data) }
-                    .getOrNull()
-                    ?.let { emit(it) }
+        // The route does not always stream. A job that has already finished is
+        // answered with a JSON snapshot, because there is nothing left to
+        // stream. Parsing that as SSE finds no frames and completes the flow
+        // silently, so the caller would see nothing rather than the outcome.
+        val contentType = response.headers().firstValue("content-type").orElse("")
+        if (!contentType.contains("text/event-stream")) {
+            val body = response.body().use { it.readBytes().decodeToString() }
+            val snapshot = runCatching { mapper.readValue<Map<String, Any>>(body) }.getOrNull()
+            val name = if (snapshot?.get("status") == "failed") "error" else "complete"
+            emit(ReachSseEvent(name, snapshot, body))
+            return@flow
+        }
+
+        response.body().bufferedReader().use { reader ->
+            var eventName: String? = null
+            val dataLines = mutableListOf<String>()
+
+            while (true) {
+                val line = reader.readLine() ?: break
+
+                if (line.isEmpty()) {
+                    val frame = buildFrame(eventName, dataLines)
+                    eventName = null
+                    dataLines.clear()
+                    if (frame != null) emit(frame)
+                    continue
+                }
+                if (line.startsWith(":")) continue  // keepalive comment
+                if (line.startsWith("event:")) {
+                    eventName = line.removePrefix("event:").trim()
+                } else if (line.startsWith("data:")) {
+                    val rest = line.removePrefix("data:")
+                    // SSE strips exactly one space after the colon.
+                    dataLines += if (rest.startsWith(" ")) rest.substring(1) else rest
+                }
             }
+
+            // A trailing frame the server never closed with a blank line.
+            buildFrame(eventName, dataLines)?.let { emit(it) }
         }
     }.flowOn(Dispatchers.IO)
+
+    /** Assembles the accumulated lines into a frame, or null if it carried no data. */
+    private fun buildFrame(eventName: String?, dataLines: List<String>): ReachSseEvent? {
+        if (dataLines.isEmpty()) return null
+        val raw = dataLines.joinToString("\n")
+        return ReachSseEvent(
+            event = eventName?.takeIf { it.isNotEmpty() } ?: "message",
+            data = runCatching { mapper.readValue<Map<String, Any>>(raw) }.getOrNull(),
+            raw = raw,
+        )
+    }
+
+    /**
+     * The subscription behind the API key.
+     *
+     * Read this before an expensive run rather than discovering the ceiling
+     * through an [UpgradeRequiredException] halfway through: a 402 says a call
+     * *was* refused, whereas `usage` says what is left before anything is spent.
+     */
+    inner class PlanResource {
+        /**
+         * `GET /plan` — plan, caps, per-feature usage and the upgrade offer.
+         *
+         * A null limit means unlimited, and `remaining` is null with it rather
+         * than 0 — 0 would read as exhausted.
+         */
+        suspend fun get(): Map<String, Any> = request("GET", "/plan")
+    }
 
     // ── Resource: Lead Finder ──────────────────────────────────────────────────
 
@@ -193,8 +267,15 @@ class MisarReachClient(
         suspend fun jobFeedback(jobId: String, data: Map<String, Any>): Map<String, Any> =
             request("POST", "/lead-finder/jobs/$jobId/feedback", data)
 
-        /** GET /lead-finder/jobs/{jobId}/stream — Server-Sent Events as a [Flow]. */
-        fun stream(jobId: String): Flow<Map<String, Any>> = sse("/lead-finder/jobs/$jobId/stream")
+        /**
+         * `GET /lead-finder/jobs/{jobId}/stream` — Server-Sent Events as a [Flow].
+         *
+         * Each frame carries the server's event name: `progress`, `found`,
+         * `complete`, `error` or `timeout`. A job that has already finished
+         * arrives as a single `complete` (or `error`) frame, so callers need no
+         * special case for it.
+         */
+        fun stream(jobId: String): Flow<ReachSseEvent> = sse("/lead-finder/jobs/$jobId/stream")
 
         suspend fun lists(): Map<String, Any> = request("GET", "/lead-finder/lists")
         suspend fun createList(data: Map<String, Any>): Map<String, Any> = request("POST", "/lead-finder/lists", data)
@@ -373,5 +454,58 @@ class MisarReachClient(
 
     companion object {
         private val RETRYABLE = setOf(429, 500, 502, 503, 504)
+
+        /** Resolves the app-relative upgrade_url the server returns. */
+        private const val APP_ORIGIN = "https://misarreach.com"
+    }
+
+    /**
+     * Returns an [UpgradeRequiredException] when the body is a plan refusal,
+     * otherwise null. The server sends `upgrade_url` app-relative, so it is
+     * resolved against the app origin.
+     */
+    private fun upgradeRefusal(status: Int, body: String?): UpgradeRequiredException? {
+        if (status != 402 && status != 429) return null
+        if (body.isNullOrBlank()) return null
+
+        return runCatching {
+            val m = mapper.readValue<Map<String, Any>>(body)
+            if (m["upgrade"] != true) return null
+
+            val raw = m["upgrade_url"] as? String
+            val url = when {
+                raw.isNullOrBlank() -> null
+                raw.startsWith("http://") || raw.startsWith("https://") -> raw
+                raw.startsWith("/") -> "$APP_ORIGIN$raw"
+                else -> "$APP_ORIGIN/$raw"
+            }
+
+            UpgradeRequiredException(
+                status = status,
+                message = (m["error"] as? String) ?: "upgrade required",
+                feature = m["feature"] as? String,
+                limit = (m["limit"] as? Number)?.toInt(),
+                current = (m["current"] as? Number)?.toInt(),
+                upgradeUrl = url,
+            )
+        }.getOrNull()
     }
 }
+
+/**
+ * One frame from the lead-finder progress stream.
+ *
+ * MisarReach names its events, unlike the unnamed-frame dialect used elsewhere,
+ * so [event] is the field callers switch on.
+ */
+data class ReachSseEvent(
+    /**
+     * The server's `event:` name — `progress`, `found`, `complete`, `error` or
+     * `timeout`. `message` when a frame carries no name, per the SSE default.
+     */
+    val event: String,
+    /** Decoded payload, or null when the frame was not JSON. */
+    val data: Map<String, Any>?,
+    /** The payload exactly as received. */
+    val raw: String,
+)
