@@ -170,7 +170,15 @@ jobs:
       - run: npm pack --dry-run
       # No NODE_AUTH_TOKEN, and no --provenance: under trusted publishing npm
       # generates and uploads the provenance attestation on its own.
+      # NODE_AUTH_TOKEN is set from NPM_TOKEN when that secret exists, and is
+      # empty otherwise. Empty means npm falls back to the OIDC credential, so
+      # this keeps trusted publishing as the preferred path while still working
+      # today: the trusted publisher cannot be configured on npmjs.com until the
+      # package exists, and it does not exist yet. Delete this env block once the
+      # trusted publisher is registered.
       - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # ── PyPI: OIDC, no API token ───────────────────────────────────────────────
   # ONE-TIME SETUP on pypi.org:
