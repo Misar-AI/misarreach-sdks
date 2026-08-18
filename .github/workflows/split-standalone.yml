@@ -109,6 +109,39 @@ jobs:
       # create-package requires the MAIN API token from
       # packagist.org/profile/ — the SAFE token is restricted to update-package
       # and is rejected here.
+
+  # Registration is a pure API call against Packagist and needs no push
+  # token, so it must not share the split job's fate. Previously it sat as a
+  # later step inside that job: with SPLIT_TOKEN unset the push failed and
+  # the package was never registered, even though nothing about registering
+  # it required the token. `!cancelled()` rather than `always()` so a manual
+  # cancellation still stops it.
+  packagist:
+    needs: split
+    if: "!cancelled()"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve language and version
+        id: target
+        run: |
+          if [ -n "${{ inputs.language }}" ]; then
+            LANG="${{ inputs.language }}"
+            VERSION="${{ inputs.version }}"
+          else
+            # refs/tags/php/v1.2.3 -> php, 1.2.3
+            LANG="${GITHUB_REF#refs/tags/}"; LANG="${LANG%%/*}"
+            VERSION="${GITHUB_REF##*/v}"
+          fi
+          case "$LANG" in
+            php|swift) ;;
+            *) echo "::error::unsupported language '$LANG'"; exit 1 ;;
+          esac
+          echo "lang=$LANG"       >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "target=${GITHUB_REPOSITORY##*/}" | sed "s/-sdks/-$LANG/" >> "$GITHUB_OUTPUT"
+
       - name: Register the package on Packagist if it is not there yet
         if: steps.target.outputs.lang == 'php'
         env:
