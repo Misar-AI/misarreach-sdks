@@ -4,6 +4,19 @@ All notable changes to this SDK are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] — 2026-08-19
+
+One version across every SDK in every Misar product, replacing the drift between separately-numbered clients.
+
+### Changed
+
+- `conversations.reply()` now takes `message`, not `body`. The old signature could only ever produce a 422 — the route has always parsed `{message, conversationId?}` — so no working call is affected.
+
+### Documentation
+
+- Rewritten README: every resource and method is listed with the endpoint it calls, the examples are verified against the API contract, and package links are consistent across all SDKs.
+- Manifest metadata filled in — homepage, repository, issue tracker, documentation and author.
+
 ## [1.0.0] — 2026-08-17
 
 First release.
