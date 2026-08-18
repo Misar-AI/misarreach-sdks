@@ -486,7 +486,7 @@ jobs:
       # of which Gradle looks at, so it would have published with blank
       # credentials and no signing key at all.
       - if: needs.resolve.outputs.sdk == 'kotlin'
-        run: ./gradlew publish --no-daemon
+        run: gradle publish --no-daemon
         working-directory: kotlin
         env:
           OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
