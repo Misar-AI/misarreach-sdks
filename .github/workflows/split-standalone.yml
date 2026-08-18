@@ -56,8 +56,10 @@ jobs:
           VERSION: ${{ steps.target.outputs.version }}
           TARGET: ${{ steps.target.outputs.target }}
         run: |
-          if [ -z "$TOKEN" ]; then
-            echo "::error::no push token available (set SPLIT_TOKEN)"; exit 1
+          set -euo pipefail
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::no push token available — set SPLIT_TOKEN (or RELEASE_TOKEN, or GH_SYNC_TOKEN) under Settings → Secrets and variables → Actions. Without one, ${TARGET} cannot be updated and the PHP/Swift release stops here."
+            exit 1
           fi
           git clone --quiet \
             "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/${TARGET}.git" \
@@ -92,12 +94,22 @@ jobs:
           git push -q origin "v${VERSION}"
           echo "::notice::${TARGET} now at v${VERSION}"
 
-      # Only now that the tag exists is it worth asking Packagist to look. It
-      # reads composer.json from the repository root and derives versions from
-      # tags, so a re-crawl requested earlier would just re-read the previous
-      # release. No upload and no publish credential — this only makes it crawl
-      # now rather than on its own schedule.
-      - name: Ask Packagist to re-crawl
+      # Submission comes before the re-crawl, because a package Packagist has
+      # never heard of cannot be re-crawled. misarai/misarreach-php has never
+      # been submitted (packagist.org redirects it to
+      # /search/?…&reason=package_not_found as of 2026-08-18), which means every
+      # tag pushed so far has published exactly nothing: `composer require
+      # misarai/misarreach-php` still fails. Tagging is not releasing until the
+      # package is registered once, and doing it here means nobody has to
+      # remember to.
+      #
+      # Idempotent by design: this runs on every PHP release, and a package that
+      # is already registered must be a no-op, not a failure.
+      #
+      # create-package requires the MAIN API token from
+      # packagist.org/profile/ — the SAFE token is restricted to update-package
+      # and is rejected here.
+      - name: Register the package on Packagist if it is not there yet
         if: steps.target.outputs.lang == 'php'
         env:
           PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
@@ -105,11 +117,72 @@ jobs:
           TARGET: ${{ steps.target.outputs.target }}
         run: |
           set -euo pipefail
-          if [ -z "${PACKAGIST_API_TOKEN:-}" ]; then
-            echo "::notice::PACKAGIST_API_TOKEN unset — Packagist will pick the tag up on its own schedule."
-            exit 0
+          if [ -z "${PACKAGIST_USERNAME:-}" ] || [ -z "${PACKAGIST_API_TOKEN:-}" ]; then
+            echo "::error::PACKAGIST_USERNAME and PACKAGIST_API_TOKEN are not both set. Without them the tag is pushed but nothing is published to Packagist. Add them under Settings → Secrets and variables → Actions; PACKAGIST_API_TOKEN must be the MAIN token, not the SAFE one."
+            exit 1
+          fi
+
+          REPO_URL="https://github.com/${GITHUB_REPOSITORY_OWNER}/${TARGET}"
+          OUT="$(mktemp)"
+          # -o/-w rather than -f: a 4xx here is expected (already registered),
+          # and the BODY is the only thing that distinguishes it from a real
+          # failure. The credentials travel in the header, never in the URL.
+          CODE="$(curl -sS --max-time 60 -o "$OUT" -w '%{http_code}' \
+            -X POST 'https://packagist.org/api/create-package' \
+            -H "Authorization: Bearer ${PACKAGIST_USERNAME}:${PACKAGIST_API_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"repository\":\"${REPO_URL}\"}" || true)"
+          BODY="$(cat "$OUT")"; rm -f "$OUT"
+
+          # Every branch below tests a VALUE. Testing the exit status of
+          # `curl … | grep …` instead would be wrong twice over: curl without -f
+          # succeeds on a 4xx, and the last stage of a pipe exits 0 on empty
+          # input, so a `|| fallback` would never run.
+          if [ -z "$CODE" ] || [ "$CODE" = "000" ]; then
+            echo "::error::no HTTP response from packagist.org/api/create-package"
+            exit 1
+          fi
+
+          case "$BODY" in
+            *'"status":"success"'*)
+              echo "::notice::registered ${REPO_URL} on Packagist"
+              ;;
+            *)
+              if printf '%s' "$BODY" | grep -qiE 'already (exist|been|in use)|package .* exists'; then
+                echo "::notice::${REPO_URL} is already registered on Packagist (HTTP ${CODE}) — nothing to do"
+              else
+                echo "::error::create-package failed (HTTP ${CODE}): ${BODY}"
+                exit 1
+              fi
+              ;;
+          esac
+
+      # Only now that the tag exists AND the package is registered is it worth
+      # asking Packagist to look. It reads composer.json from the repository
+      # root and derives versions from tags, so a re-crawl requested earlier
+      # would just re-read the previous release. No upload — this only makes it
+      # crawl now rather than on its own schedule.
+      - name: Ask Packagist to re-crawl
+        if: steps.target.outputs.lang == 'php'
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+          TARGET: ${{ steps.target.outputs.target }}
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PACKAGIST_USERNAME:-}" ] || [ -z "${PACKAGIST_API_TOKEN:-}" ]; then
+            echo "::error::PACKAGIST_USERNAME and PACKAGIST_API_TOKEN are not both set — Packagist cannot be told about v${VERSION}."
+            exit 1
           fi
           # The API wants the VCS URL it tracks, not the packagist.org page.
-          curl -sSf -XPOST -H 'content-type:application/json' \
+          OUT="$(mktemp)"
+          CODE="$(curl -sS --max-time 60 -o "$OUT" -w '%{http_code}' \
+            -XPOST -H 'content-type:application/json' \
             "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_API_TOKEN}" \
-            -d "{\"repository\":{\"url\":\"https://github.com/${GITHUB_REPOSITORY_OWNER}/${TARGET}\"}}"
+            -d "{\"repository\":{\"url\":\"https://github.com/${GITHUB_REPOSITORY_OWNER}/${TARGET}\"}}" || true)"
+          BODY="$(cat "$OUT")"; rm -f "$OUT"
+          case "$CODE" in
+            200|202) echo "::notice::Packagist re-crawl requested for ${TARGET}" ;;
+            *) echo "::error::update-package failed (HTTP ${CODE:-none}): ${BODY}"; exit 1 ;;
+          esac
