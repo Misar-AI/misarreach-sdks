@@ -404,6 +404,14 @@ jobs:
             # and the failure looked like a bad credential rather than a
             # precedence problem.
             unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN PUB_TOKEN
+            # setup-dart also records a token ENTRY for pub.dev in
+            # pub-tokens.json that says "read this from $PUB_TOKEN". Unsetting the
+            # variable alone leaves that entry dangling, and pub then refuses with
+            # 'requires environment variable named "PUB_TOKEN" but not defined'.
+            # The entry has to go as well, so the OAuth credentials file is the
+            # only credential left standing.
+            rm -f "$HOME/.config/dart/pub-tokens.json" "${PUB_CACHE:-$HOME/.pub-cache}/pub-tokens.json"
+            dart pub token remove https://pub.dev 2>/dev/null || true
             echo "publishing with the credentials file"
           else
             echo "publishing over OIDC"
