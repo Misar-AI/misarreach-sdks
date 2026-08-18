@@ -353,7 +353,6 @@ jobs:
     with:
       language: swift
       version: ${{ needs.tag.outputs.version_swift }}
-    secrets: inherit
 
   # php does not publish through publish.yml — Packagist and Swift PM read a
   # repository ROOT, so the release is the standalone repo that
@@ -370,4 +369,3 @@ jobs:
     with:
       language: php
       version: ${{ needs.tag.outputs.version_php }}
-    secrets: inherit
