@@ -62,7 +62,10 @@ on:
         type: string
 
 concurrency:
-  group: publish-${{ github.ref }}
+  # Per SDK, not per ref. auto-tag calls this workflow once per language in a
+  # single run, so a ref-only group put all of them in one lane and GitHub
+  # kept just the newest — eight publishes cancelled each other.
+  group: publish-${{ github.ref }}-${{ inputs.sdk || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -80,8 +83,13 @@ jobs:
       - id: parse
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            SDK="${{ inputs.sdk }}"; VERSION="${{ inputs.version }}"
+          # Inputs decide when they are present. Testing event_name is wrong for a
+          # called workflow: github.event_name stays the CALLER's event, so a
+          # workflow_call landed here with event_name=push and tried to parse a
+          # version out of refs/heads/main.
+          SDK="${{ inputs.sdk }}"; VERSION="${{ inputs.version }}"
+          if [ -n "$SDK" ]; then
+            :
           else
             REF="${GITHUB_REF#refs/tags/}"
             if [[ "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then

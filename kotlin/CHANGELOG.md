@@ -4,6 +4,10 @@ All notable changes to this SDK are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.3] — 2026-08-19
+
+Republished so that every SDK, including the tag-versioned ones, ships through the same automated release pipeline. No API changes.
+
 ## [5.0.2] — 2026-08-19
 
 Republished so that every SDK, including the tag-versioned ones, ships through the same automated release pipeline. No API changes.

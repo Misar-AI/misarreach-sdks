@@ -1,6 +1,6 @@
 {
   "name": "@misarreach/sdk",
-  "version": "5.0.2",
+  "version": "5.0.3",
   "description": "Typed client for MisarReach outreach & lead generation: a 23-source lead finder with SSE job streaming, contacts/deals/pipeline CRM, multi-channel campaigns, AI sales agent, autopilot and plan-usage reporting.",
   "type": "module",
   "main": "./dist/index.js",

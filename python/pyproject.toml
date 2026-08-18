@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "misar-reach"
-version = "5.0.2"
+version = "5.0.3"
 description = "Sync + async client for MisarReach outreach & lead generation: a 23-source lead finder with SSE job streaming, contacts/deals/pipeline CRM, multi-channel campaigns, AI sales agent, autopilot and plan-usage reporting"
 readme = "README.md"
 requires-python = ">=3.9"

@@ -15,7 +15,7 @@ autopilot, and the AI sales agent. For iOS, Android, macOS, and Web.
 ```yaml
 # pubspec.yaml
 dependencies:
-  misar_reach_flutter: ^5.0.2
+  misar_reach_flutter: ^5.0.3
 ```
 
 ## Usage
