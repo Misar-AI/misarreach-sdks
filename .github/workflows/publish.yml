@@ -372,6 +372,27 @@ jobs:
         with:
           channel: stable
 
+      # pub.dev's automated publishing is configured per EXISTING package, so it
+      # cannot create misar_reach or misar_reach_flutter on their first release.
+      # When PUB_CREDENTIALS is present it is written to the credentials file and
+      # used; when it is absent the step is skipped and the OIDC path applies
+      # exactly as before. Remove this once both packages exist and automated
+      # publishing is configured on pub.dev.
+      - name: Use PUB_CREDENTIALS for the first publish, if provided
+        env:
+          PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PUB_CREDENTIALS:-}" ]; then
+            echo "PUB_CREDENTIALS not set — relying on pub.dev automated publishing (OIDC)."
+            exit 0
+          fi
+          mkdir -p "$HOME/.config/dart" "$HOME/.pub-cache"
+          printf '%s' "$PUB_CREDENTIALS" > "$HOME/.config/dart/pub-credentials.json"
+          printf '%s' "$PUB_CREDENTIALS" > "$HOME/.pub-cache/credentials.json"
+          chmod 600 "$HOME/.config/dart/pub-credentials.json" "$HOME/.pub-cache/credentials.json"
+          echo "credentials installed"
+
       - run: dart pub get
         working-directory: ${{ needs.resolve.outputs.sdk }}
       - run: dart pub publish --dry-run
