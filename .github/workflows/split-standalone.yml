@@ -91,3 +91,25 @@ jobs:
           git push -q origin main
           git push -q origin "v${VERSION}"
           echo "::notice::${TARGET} now at v${VERSION}"
+
+      # Only now that the tag exists is it worth asking Packagist to look. It
+      # reads composer.json from the repository root and derives versions from
+      # tags, so a re-crawl requested earlier would just re-read the previous
+      # release. No upload and no publish credential — this only makes it crawl
+      # now rather than on its own schedule.
+      - name: Ask Packagist to re-crawl
+        if: steps.target.outputs.lang == 'php'
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+          TARGET: ${{ steps.target.outputs.target }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PACKAGIST_API_TOKEN:-}" ]; then
+            echo "::notice::PACKAGIST_API_TOKEN unset — Packagist will pick the tag up on its own schedule."
+            exit 0
+          fi
+          # The API wants the VCS URL it tracks, not the packagist.org page.
+          curl -sSf -XPOST -H 'content-type:application/json' \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_API_TOKEN}" \
+            -d "{\"repository\":{\"url\":\"https://github.com/${GITHUB_REPOSITORY_OWNER}/${TARGET}\"}}"

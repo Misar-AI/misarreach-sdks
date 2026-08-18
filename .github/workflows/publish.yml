@@ -182,7 +182,18 @@ jobs:
       id-token: write      # pub.dev automated publishing — no credentials file
     steps:
       - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
+
+      # The flutter package declares `flutter: sdk: flutter`, which plain dart
+      # cannot resolve — `dart pub get` fails with "Flutter users should use
+      # `flutter pub` instead of `dart pub`". Installing the Flutter SDK puts a
+      # dart on PATH that resolves both, so one job still covers both packages.
+      - if: needs.resolve.outputs.sdk == 'dart'
+        uses: dart-lang/setup-dart@v1
+      - if: needs.resolve.outputs.sdk == 'flutter'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
       - run: dart pub get
         working-directory: ${{ needs.resolve.outputs.sdk }}
       - run: dart pub publish --dry-run
@@ -249,31 +260,19 @@ jobs:
   swift:
     needs: resolve
     if: needs.resolve.outputs.sdk == 'swift'
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
+    # Linux on purpose: a macOS build passes while the package is unusable there,
+    # because URLSession's async data(for:) and bytes(for:) do not exist in
+    # swift-corelibs-foundation. Validating on the platform with the smaller
+    # Foundation is what catches that.
+    container: swift:5.10
     steps:
       - uses: actions/checkout@v4
       - run: swift build
       - run: swift test
 
-  # ── PHP: ask Packagist to re-crawl ─────────────────────────────────────────
-  # Packagist reads composer.json from this repo and derives versions from tags.
-  # No upload, no publish credential — the token below only makes it re-crawl
-  # now instead of on its own schedule.
-  php:
-    needs: resolve
-    if: needs.resolve.outputs.sdk == 'php'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger re-crawl
-        run: |
-          set -euo pipefail
-          if [ -z "${PACKAGIST_API_TOKEN:-}" ]; then
-            echo "PACKAGIST_API_TOKEN not set — Packagist will pick the tag up on its own schedule."
-            exit 0
-          fi
-          curl -sS -XPOST -H'content-type:application/json' \
-            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_API_TOKEN}" \
-            -d '{"repository":{"url":"https://packagist.org/packages/misarai/misarreach-php"}}'
-        env:
-          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
-          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+  # PHP has no job here. Packagist reads composer.json from a repository ROOT and
+  # cannot index a subdirectory, so it tracks Misar-AI/misarreach-php — which
+  # split-standalone.yml populates and tags. The re-crawl request lives there,
+  # after the tag exists, because asking Packagist to re-crawl before the tag is
+  # pushed just makes it read the previous release.
