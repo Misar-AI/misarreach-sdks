@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "io.misar"
-version = "1.0.0"
+version = "5.0.0"
 
 repositories {
     mavenCentral()

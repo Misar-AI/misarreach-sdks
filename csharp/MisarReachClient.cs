@@ -659,7 +659,6 @@ public sealed class MisarReachClient : IDisposable
     // Settings
     // =========================================================================
 
-    /// <summary>GET /settings/sender-address</summary>
     /// <summary>
     /// <c>GET /plan</c> — the subscription behind the API key: plan, caps,
     /// per-feature usage and the upgrade offer.
@@ -673,6 +672,7 @@ public sealed class MisarReachClient : IDisposable
     public Task<JsonElement> Plan_GetAsync(CancellationToken ct = default) =>
         RequestAsync(HttpMethod.Get, "/plan", cancellationToken: ct);
 
+    /// <summary>GET /settings/sender-address</summary>
     public Task<JsonElement> Settings_SenderAddressAsync(CancellationToken ct = default) =>
         RequestAsync(HttpMethod.Get, "/settings/sender-address", cancellationToken: ct);
 

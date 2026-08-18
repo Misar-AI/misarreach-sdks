@@ -1,6 +1,13 @@
-// Package misarreach is the official Go SDK for the MisarReach Developer API —
-// lead finder (23 sources), multi-channel outreach, deals/pipeline CRM,
-// autopilot, and the AI sales agent.
+// Package misarreach is the Go client for MisarReach, an outreach and
+// lead-generation platform: a 23-source lead finder whose async jobs stream
+// progress over Server-Sent Events, a contacts/deals/pipeline CRM, multi-step
+// campaigns dispatched across email, SMS, WhatsApp, web push and social DMs, an
+// AI sales agent, autopilot, workspaces, and plan-usage reporting.
+//
+// Every resource method takes a context.Context and returns a Response
+// (map[string]interface{}), matching the open-shape reach contract. Requests
+// retry with exponential back-off on 429 and 5xx; a plan refusal (402 with
+// upgrade: true) is never retried.
 //
 // Auth uses a reach developer key (mrk_…), validated only against the
 // reach-owned key table, so a key from any other Misar product is rejected.

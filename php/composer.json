@@ -1,10 +1,29 @@
 {
     "name": "misarai/misarreach-php",
-    "description": "Official PHP SDK for MisarReach — lead finder, multi-channel outreach, and CRM. Full API coverage.",
+    "description": "PHP client for the MisarReach outreach API: async lead finder over 23 sources with SSE progress, CRM deals and Kanban pipeline, multi-step email/SMS/WhatsApp/push/social campaigns, AI sales agent, autopilot, plan quotas, typed errors and retrying transport.",
     "type": "library",
     "license": "MIT",
-    "homepage": "https://misarreach.com",
-    "keywords": ["misarreach", "leads", "outreach", "crm", "sdk", "php", "sales"],
+    "homepage": "https://www.misarreach.com",
+    "support": {
+        "issues": "https://github.com/Misar-AI/misarreach-sdks/issues",
+        "source": "https://github.com/Misar-AI/misarreach-sdks/tree/main/php",
+        "docs": "https://docs.misar.io/reach"
+    },
+    "keywords": [
+        "misarreach",
+        "lead-generation",
+        "lead-finder",
+        "outreach",
+        "cold-email",
+        "crm",
+        "sales-pipeline",
+        "email-marketing",
+        "sms",
+        "whatsapp",
+        "sales-automation",
+        "api-client",
+        "sse"
+    ],
     "authors": [
         {
             "name": "Misar AI",

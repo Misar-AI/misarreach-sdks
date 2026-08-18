@@ -7,12 +7,12 @@
 
     <groupId>io.misar</groupId>
     <artifactId>misarreach-java</artifactId>
-    <version>1.0.0</version>
+    <version>5.0.0</version>
     <packaging>jar</packaging>
 
     <name>MisarReach Java SDK</name>
-    <description>Official Java SDK for the MisarReach developer API — full coverage, sync + async, SSE lead-job streaming</description>
-    <url>https://misarreach.com/docs/sdks/java</url>
+    <description>Java 17 client for the MisarReach outreach and lead-generation API — lead finder, CRM contacts and deals, Kanban pipeline, multi-channel campaigns, AI sales agent, autopilot, deliverability and plan usage across 18 resource groups covering all 94 REST operations. Blocking calls with CompletableFuture twins on the busiest 30, JDK HttpClient transport with exponential back-off retries, Server-Sent Events for lead-search job progress, and HTTP 402 plan caps raised as UpgradeRequiredException.</description>
+    <url>https://www.misarreach.com</url>
 
     <licenses>
         <license>
@@ -33,11 +33,17 @@
     <scm>
         <connection>scm:git:git://github.com/Misar-AI/misarreach-sdks.git</connection>
         <developerConnection>scm:git:ssh://github.com/Misar-AI/misarreach-sdks.git</developerConnection>
-        <url>https://github.com/Misar-AI/misarreach-sdks</url>
+        <url>https://github.com/Misar-AI/misarreach-sdks/tree/main/java</url>
     </scm>
+
+    <issueManagement>
+        <system>GitHub Issues</system>
+        <url>https://github.com/Misar-AI/misarreach-sdks/issues</url>
+    </issueManagement>
 
     <properties>
         <java.version>17</java.version>
+        <misarreach.docs>https://docs.misar.io/reach</misarreach.docs>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

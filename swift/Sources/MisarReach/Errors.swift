@@ -79,6 +79,15 @@ public struct MisarReachStreamEvent {
     public let data: [String: Any]
     /// Raw `data:` text of the event.
     public let raw: String
+
+    /// The synthesised memberwise initialiser is `internal`, so without this a
+    /// caller outside the module could read a `MisarReachStreamEvent` but never
+    /// construct one — no test double, no replayed fixture.
+    public init(event: String, data: [String: Any], raw: String) {
+        self.event = event
+        self.data = data
+        self.raw = raw
+    }
 }
 
 public extension MisarReachError {

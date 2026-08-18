@@ -1,6 +1,6 @@
 name: misar_reach_flutter
 description: Official Flutter SDK for MisarReach — secure key storage, retry, SSE streaming, and full API coverage for iOS, Android, macOS, Web.
-version: 1.0.0
+version: 5.0.0
 homepage: https://misarreach.com/docs
 documentation: https://misarreach.com/docs
 issue_tracker: https://misarreach.com/contact

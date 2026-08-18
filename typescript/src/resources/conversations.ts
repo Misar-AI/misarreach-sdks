@@ -25,7 +25,7 @@ export class ConversationsResource {
    * REPLY_ONLY channel the recipient must have messaged first, and the window
    * may have closed. A refusal here is the gate working, not a transient error.
    */
-  reply(email: string, params: { body: string; channel?: string; subject?: string }): Promise<JsonObject> {
+  reply(email: string, params: { message: string; conversationId?: string }): Promise<JsonObject> {
     return this.request("POST", `/conversations/${encodeURIComponent(email)}/reply`, params);
   }
 }

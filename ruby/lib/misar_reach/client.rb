@@ -653,6 +653,9 @@ module MisarReach
     end
 
     def parse_response(resp, status)
+      # A refusal with an empty body — a bare 401/404, or a 5xx from a proxy —
+      # must still raise. Falling into the 204 guard below reported it as success.
+      raise_for_status(status, JSON.generate("error" => resp.message.to_s)) if status >= 400 && resp.body.to_s.empty?
       return {} if status == 204 || resp.body.nil? || resp.body.empty?
 
       decoded = begin

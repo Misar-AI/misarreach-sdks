@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/Misar-AI/misarreach-sdks/go/misarreach"
+	"github.com/Misar-AI/misarreach-sdks/go/v5/misarreach"
 )
 
 func newTestClient(server *httptest.Server) *misarreach.Client {

@@ -10,16 +10,21 @@
 
     <!-- NuGet metadata -->
     <PackageId>Misar.Reach</PackageId>
-    <Version>1.0.0</Version>
+    <Version>5.0.0</Version>
     <Authors>Misar AI</Authors>
     <Company>Misar AI Technology Pvt Ltd</Company>
-    <Description>Official C# SDK for MisarReach — lead finder (23 sources), multi-channel outreach, and CRM (deals, pipeline, sales agents). Full API coverage with async/await support.</Description>
+    <Copyright>Copyright (c) Misar AI</Copyright>
+    <Description>Async .NET client for the MisarReach outreach API: lead finder across 23 sources, CRM contacts, deals and pipeline, multi-step campaigns over email, SMS, WhatsApp, web push and social DMs, plus an AI sales agent and autopilot. 94 methods on one MisarReachClient cover every documented endpoint. Server-Sent Events carry live lead-search progress and synthesise a terminal event for a job that already finished; plan caps surface as a typed UpgradeRequiredException (HTTP 402, upgrade:true) that is never retried, while genuinely transient statuses retry with exponential back-off. Authenticates with an mrk_ key; targets net8.0 on System.Text.Json with no third-party dependencies.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://misarreach.com/docs</PackageProjectUrl>
-    <RepositoryUrl>https://misarreach.com</RepositoryUrl>
-    <PackageTags>misarreach;leads;outreach;crm;sdk;api;sales</PackageTags>
+    <PackageProjectUrl>https://www.misarreach.com</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Misar-AI/misarreach-sdks</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryBranch>main</RepositoryBranch>
+    <PackageDocumentationUrl>https://docs.misar.io/reach</PackageDocumentationUrl>
+    <PackageTags>misarreach;lead-generation;outreach;sales-engagement;crm;sales-automation;email-marketing;sms;whatsapp;cold-email;api-client;rest-client;server-sent-events;sse</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,7 +1,7 @@
 {
   "name": "@misarreach/sdk",
-  "version": "1.0.0",
-  "description": "TypeScript SDK for the MisarReach API (api.misar.io/reach/api)",
+  "version": "5.0.0",
+  "description": "Typed client for MisarReach outreach & lead generation: a 23-source lead finder with SSE job streaming, contacts/deals/pipeline CRM, multi-channel campaigns, AI sales agent, autopilot and plan-usage reporting.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -32,22 +32,30 @@
     "node": ">=18"
   },
   "license": "MIT",
-  "author": "Misar AI <support@misar.io>",
-  "homepage": "https://misarreach.com/docs",
+  "author": "Misar AI <hello@misar.io>",
+  "homepage": "https://www.misarreach.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Misar-AI/misarreach-sdks.git",
     "directory": "typescript"
   },
   "bugs": {
-    "url": "https://misarreach.com/contact"
+    "url": "https://github.com/Misar-AI/misarreach-sdks/issues"
   },
   "keywords": [
     "misarreach",
     "outreach",
+    "lead-generation",
     "lead-finder",
+    "prospecting",
+    "sales-engagement",
+    "cold-email",
     "crm",
     "pipeline",
+    "campaigns",
+    "sales-automation",
+    "email-verification",
+    "sse",
     "sdk",
     "typescript",
     "api-client"

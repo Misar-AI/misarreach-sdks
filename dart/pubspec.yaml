@@ -1,9 +1,17 @@
 name: misarreach
-description: Official Dart SDK for MisarReach — lead finder, multi-channel outreach, CRM, autopilot. Full API coverage with retry logic and SSE streaming.
-version: 1.0.0
-homepage: https://misarreach.com/docs
-documentation: https://misarreach.com/docs
-issue_tracker: https://misarreach.com/contact
+description: "Dart client for the MisarReach outreach and lead-generation API: async lead finder, CRM pipeline, multi-channel campaigns, AI sales agent, retries and SSE streaming."
+version: 5.0.0
+homepage: https://www.misarreach.com
+repository: https://github.com/Misar-AI/misarreach-sdks/tree/main/dart
+issue_tracker: https://github.com/Misar-AI/misarreach-sdks/issues
+documentation: https://docs.misar.io/reach
+
+topics:
+  - outreach
+  - lead-generation
+  - crm
+  - sales
+  - api-client
 
 environment:
   sdk: ">=3.0.0 <4.0.0"

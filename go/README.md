@@ -9,7 +9,7 @@ Full reference: [`docs.misar.io/reach`](https://docs.misar.io/reach) · OpenAPI:
 ## Install
 
 ```bash
-go get github.com/Misar-AI/misarreach-sdks/go/misarreach
+go get github.com/Misar-AI/misarreach-sdks/go/v5/misarreach
 ```
 
 ## Auth
@@ -27,7 +27,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Misar-AI/misarreach-sdks/go/misarreach"
+	"github.com/Misar-AI/misarreach-sdks/go/v5/misarreach"
 )
 
 func main() {
@@ -65,10 +65,18 @@ func main() {
 
 ## Resources
 
-`c.Leads` · `c.Deals` · `c.Pipeline` · `c.Channels` · `c.Autopilot` ·
-`c.SalesAgent` · `c.Campaigns` · `c.Contacts` · `c.Conversations` ·
-`c.Settings` · `c.Workspaces` · `c.Ads` — covering all 84 developer-API
-operations across the 63 reach paths.
+**18 resource groups · 94 operations**
+
+`c.Leads` · `c.LeadFinder` · `c.Deals` · `c.Pipeline` · `c.Campaigns` ·
+`c.CampaignTemplates` · `c.Contacts` · `c.Conversations` · `c.Channels` ·
+`c.SalesAgent` · `c.Autopilot` · `c.Deliverability` · `c.Notifications` ·
+`c.Webhooks` · `c.Workspaces` · `c.Plan` · `c.Settings` · `c.Ads` — 106
+exported methods covering all 94 operations across the 70 paths in
+`openapi/reach.openapi.json`, with none invented.
+
+`c.LeadFinder` holds URL-encoding twins of the `c.Leads` methods that take a
+path parameter; prefer them for domains, emails and anything that is not
+already a bare slug.
 
 - GET/list methods take a `misarreach.Params` (`map[string]string`) query bag.
 - POST/PATCH/PUT methods take a `body interface{}` — a typed request struct
@@ -86,6 +94,13 @@ Non-2xx responses return an `*APIError` (`Status`, `Message`, `Code`,
 Transport failures return a `*NetworkError`. 429/5xx are retried with
 exponential backoff (configurable via `WithMaxRetries`).
 
-## License
+## Links
 
-MIT
+- **Website** — https://www.misarreach.com
+- **App** — https://reach.misar.io
+- **Parent** — https://misar.io
+- **Documentation** — https://docs.misar.io/reach
+- **Source** — https://github.com/Misar-AI/misarreach-sdks
+- **pkg.go.dev** — https://pkg.go.dev/github.com/Misar-AI/misarreach-sdks/go/v5
+
+MIT © [Misar AI](https://misar.io)

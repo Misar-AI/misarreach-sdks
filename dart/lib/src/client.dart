@@ -595,8 +595,11 @@ class WorkspacesResource extends _Resource {
       _client._request('GET', '/workspaces/$id/members');
   Future<Map<String, dynamic>> addMember(String id, Map<String, dynamic> data) =>
       _client._request('POST', '/workspaces/$id/members', body: data);
-  Future<Map<String, dynamic>> removeMember(String id) =>
-      _client._request('DELETE', '/workspaces/$id/members');
+  /// Remove [memberId] from workspace [id]. The route reads the member from the
+  /// `memberId` query param and answers 422 without it, so it must be sent.
+  Future<Map<String, dynamic>> removeMember(String id, String memberId) =>
+      _client._request('DELETE', '/workspaces/$id/members',
+          queryParams: {'memberId': memberId});
 }
 
 /// Account settings.

@@ -239,6 +239,14 @@ impl Inner {
 
                     let text = resp.text().await.unwrap_or_default();
 
+                    // Reads are refused by the same 402 `upgrade: true` envelope
+                    // as writes; without this a plan refusal on any GET route
+                    // arrived as a bare `Api { status: 402 }` and lost `feature`,
+                    // `limit`, `current` and `upgrade_url`.
+                    if let Some(err) = Self::parse_upgrade_required(status_u16, &text) {
+                        return Err(err);
+                    }
+
                     if !status.is_success() {
                         return Err(ReachError::Api {
                             status: status_u16,

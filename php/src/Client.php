@@ -117,7 +117,7 @@ class Client
                 continue;
             }
 
-            if ($status === 204 || $body === '' || $body === false) {
+            if ($status < 400 && ($status === 204 || $body === '' || $body === false)) {
                 return [];
             }
 
@@ -194,7 +194,15 @@ class Client
 
     private function mapError(int $status, array $decoded, string $rawBody): ApiError
     {
-        $message = $decoded['error'] ?? $decoded['message'] ?? ($rawBody !== '' ? $rawBody : "HTTP {$status}");
+        // `error` is a string OR an object (a zod flatten on 400/422 — see the
+        // Error schema in openapi/reach.openapi.json). Every error class types
+        // $message as `string`, so handing the object straight through raised a
+        // fatal TypeError from the constructor instead of the catchable ApiError
+        // the caller was told to expect.
+        $raw     = $decoded['error'] ?? $decoded['message'] ?? null;
+        $message = is_string($raw) ? $raw
+            : ($raw !== null ? (json_encode($raw) ?: "HTTP {$status}")
+            : ($rawBody !== '' ? $rawBody : "HTTP {$status}"));
 
         // A counted cap answers 402 with `upgrade: true`. Only 429 was
         // inspected before, so every real refusal became a generic ApiError.
