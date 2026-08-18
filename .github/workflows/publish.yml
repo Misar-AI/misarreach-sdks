@@ -15,10 +15,22 @@ name: Publish SDK
 # tooling actually depend on — but the twelve jobs share a single gate and a
 # single place to fix a bug.
 #
-# Two registries need no stored credential here, because GitHub is a supported
-# OIDC provider for both: PyPI Trusted Publishing and pub.dev automated
-# publishing. That is a real security win over a self-hosted runner, where both
-# would require a long-lived token sitting in a secret store.
+# FOUR registries need no stored credential here, because GitHub is a supported
+# OIDC provider for all of them: PyPI Trusted Publishing, npm trusted publishing
+# (GA 2025-07-31), pub.dev automated publishing, and NuGet trusted publishing.
+# Those jobs mint a short-lived credential per run instead of reading a
+# long-lived one out of a secret store, so there is nothing here to leak, rotate
+# or forget.
+#
+# That matters more than usual on this repository: it has NO Actions secrets at
+# all. Every job below that still needs one therefore fails loudly and names the
+# secret it wants, rather than skipping and reporting a green run that published
+# nothing — which is the state this repo was in.
+#
+# Each OIDC job carries the exact one-time setup the registry side needs. OIDC
+# is a two-ended handshake: until the registry is told to trust
+# Misar-AI/misarreach-sdks + publish.yml + the `release` environment, the token
+# this workflow presents is just an unrecognised assertion.
 
 on:
   push:
@@ -85,29 +97,86 @@ jobs:
         with: { node-version: '20' }
       - run: node scripts/check-sdk-release.mjs "${{ steps.parse.outputs.sdk }}" "${{ steps.parse.outputs.version }}"
 
+  # ── npm: OIDC, no NPM_TOKEN ────────────────────────────────────────────────
+  # ONE-TIME SETUP on npmjs.com, by a maintainer of the package:
+  #   Packages → @misarreach/sdk → Settings → Trusted Publishing → GitHub Actions
+  #     Organization or user: Misar-AI
+  #     Repository:           misarreach-sdks
+  #     Workflow filename:    publish.yml     ← filename only, no .github/workflows/ prefix
+  #     Environment:          release         ← must equal the `environment:` below
+  #     Allowed actions:      npm publish
+  #
+  # npm attaches a trusted publisher to a package that ALREADY EXISTS, and
+  # @misarreach/sdk has never been published (registry 404 as of 2026-08-18). So
+  # the first version has to go up by hand once — `npm publish --access public`
+  # from a laptop — and every version after it comes from here with no stored
+  # credential.
   npm:
     needs: resolve
     if: needs.resolve.outputs.sdk == 'typescript'
     runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write      # trusted publishing — the OIDC token IS the credential
     defaults: { run: { working-directory: typescript } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20', registry-url: 'https://registry.npmjs.org' }
+        with:
+          # OIDC publishing needs npm >= 11.5.1, which node 20 does not ship —
+          # it carries npm 10.x. node 24 does.
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Require an npm new enough to publish with OIDC
+        run: |
+          set -euo pipefail
+          # Asserted rather than assumed: on an older npm the publish does not
+          # announce that OIDC is unavailable, it just fails needing a token
+          # that this repo deliberately no longer has.
+          #
+          # Guarded on the VALUE. `npm --version | grep -q ... || echo missing`
+          # would test the PIPELINE's status, and the last stage exits 0 on
+          # empty input, so the fallback would never run.
+          NPM_V="$(npm --version || true)"
+          MIN=11.5.1
+          if [ -z "$NPM_V" ]; then
+            echo "::error::npm is not on PATH"; exit 1
+          fi
+          if [ "$(printf '%s\n%s\n' "$NPM_V" "$MIN" | sort -V | head -n1)" != "$MIN" ]; then
+            echo "::error::npm $NPM_V is older than $MIN, the first version that can publish over OIDC. Raise node-version in this job."
+            exit 1
+          fi
+          echo "npm $NPM_V — OIDC publishing supported"
+
       - run: npm install --no-package-lock
       # tsc is incremental; a stale dist/ silently ships old code.
       - run: rm -rf dist && npx tsc
       - run: npm pack --dry-run
+      # No NODE_AUTH_TOKEN, and no --provenance: under trusted publishing npm
+      # generates and uploads the provenance attestation on its own.
       - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+  # ── PyPI: OIDC, no API token ───────────────────────────────────────────────
+  # ONE-TIME SETUP on pypi.org:
+  #   Account settings → Publishing → Add a new pending publisher → GitHub
+  #     PyPI Project Name: misar-reach
+  #     Owner:             Misar-AI
+  #     Repository name:   misarreach-sdks
+  #     Workflow name:     publish.yml
+  #     Environment name:  release          ← must equal the `environment:` below
+  #
+  # PyPI is the only registry in this file that can be configured BEFORE the
+  # project exists — a "pending publisher" creates the project on first use — so
+  # unlike npm and pub.dev, python needs no manual first upload.
   pypi:
     needs: resolve
     if: needs.resolve.outputs.sdk == 'python'
     runs-on: ubuntu-latest
     environment: release
     permissions:
+      contents: read
       id-token: write      # Trusted Publishing — no API token is stored anywhere
     steps:
       - uses: actions/checkout@v4
@@ -121,6 +190,10 @@ jobs:
         with:
           packages-dir: python/dist
 
+  # ── crates.io: token ───────────────────────────────────────────────────────
+  # Stays on a secret. Nothing here is skippable: without the token there is no
+  # way to authenticate, so the job fails immediately rather than building for
+  # three minutes and failing at the last step.
   crates:
     needs: resolve
     if: needs.resolve.outputs.sdk == 'rust'
@@ -128,6 +201,18 @@ jobs:
     defaults: { run: { working-directory: rust } }
     steps:
       - uses: actions/checkout@v4
+
+      # `secrets` cannot be used in a step `if:` — referencing it there fails
+      # the whole workflow at validation time — so this is a runtime check.
+      - name: Require CARGO_REGISTRY_TOKEN
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is not set on this repository. crates.io cannot be published to without it. Add it under Settings → Secrets and variables → Actions → New repository secret."
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
       - run: cargo test
@@ -136,6 +221,8 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+  # ── RubyGems: token ────────────────────────────────────────────────────────
+  # Stays on a secret.
   rubygems:
     needs: resolve
     if: needs.resolve.outputs.sdk == 'ruby'
@@ -143,6 +230,19 @@ jobs:
     defaults: { run: { working-directory: ruby } }
     steps:
       - uses: actions/checkout@v4
+
+      # Without this the job happily writes a credentials file containing an
+      # EMPTY api key and fails at `gem push` with an authentication error that
+      # says nothing about the real cause.
+      - name: Require RUBYGEMS_API_KEY
+        env:
+          RUBYGEMS_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
+        run: |
+          if [ -z "${RUBYGEMS_API_KEY:-}" ]; then
+            echo "::error::RUBYGEMS_API_KEY is not set on this repository. RubyGems cannot be published to without it. Add it under Settings → Secrets and variables → Actions → New repository secret."
+            exit 1
+          fi
+
       - uses: ruby/setup-ruby@v1
         with: { ruby-version: '3.3' }
       - run: gem build misar_reach.gemspec
@@ -158,27 +258,83 @@ jobs:
       - if: always()
         run: rm -f ~/.gem/credentials
 
+  # ── NuGet: OIDC, no NUGET_API_KEY ──────────────────────────────────────────
+  # ONE-TIME SETUP on nuget.org, signed in as the account (or org) that will own
+  # the package:
+  #   nuget.org → your username → Trusted Publishing → add a policy
+  #     Repository Owner: Misar-AI
+  #     Repository:       misarreach-sdks
+  #     Workflow File:    publish.yml     ← filename only, no path
+  #     Environment:      release         ← must equal the `environment:` below
+  #
+  # The policy is attached to a package OWNER, not to a package id, so it covers
+  # Misar.Reach before that id exists — no manual first push needed here.
+  #
+  # Then set the repository VARIABLE (Settings → Secrets and variables → Actions
+  # → Variables) NUGET_USER to that nuget.org profile name — the profile name,
+  # not the email. It is a username, not a credential, so it is deliberately a
+  # variable and not a secret.
   nuget:
     needs: resolve
     if: needs.resolve.outputs.sdk == 'csharp'
     runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write      # exchanged for a NuGet key that is valid for one hour
     defaults: { run: { working-directory: csharp } }
     steps:
       - uses: actions/checkout@v4
+
+      - name: Require the NUGET_USER variable
+        env:
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: |
+          if [ -z "${NUGET_USER:-}" ]; then
+            echo "::error::repository variable NUGET_USER is not set. NuGet/login needs the nuget.org profile name that owns the trusted publishing policy. Add it under Settings → Secrets and variables → Actions → Variables (not Secrets — it is a username)."
+            exit 1
+          fi
+
       - uses: actions/setup-dotnet@v4
         with: { dotnet-version: '8.0.x' }
       - run: dotnet build --configuration Release
       - run: dotnet pack --configuration Release --output ./nupkg
-      - run: dotnet nuget push "./nupkg/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
 
+      # Requested as late as possible, immediately before the push: the minted
+      # key expires after an hour, and each OIDC token buys exactly one key.
+      - name: Exchange the OIDC token for a short-lived NuGet key
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - run: dotnet nuget push "./nupkg/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --skip-duplicate
+
+  # ── pub.dev: OIDC, no credentials file ─────────────────────────────────────
+  # ONE-TIME SETUP on pub.dev, as an uploader on each package — TWO packages,
+  # each configured separately:
+  #   pub.dev/packages/misar_reach/admin         → Automated publishing →
+  #     "Enable publishing from GitHub Actions"
+  #       Repository:  Misar-AI/misarreach-sdks
+  #       Tag-pattern: dart/v{{version}}
+  #   pub.dev/packages/misar_reach_flutter/admin → same, but
+  #       Tag-pattern: flutter/v{{version}}
+  #   Optionally tick "Require GitHub Actions environment" and enter `release`,
+  #   which is the environment this job runs in.
+  #
+  # The tag-patterns are not cosmetic: pub.dev validates the ref inside the OIDC
+  # token against them, so the tags auto-tag.yml already pushes are what must be
+  # described. Two consequences worth knowing — a workflow_dispatch run can
+  # never publish to pub.dev (its ref is a branch, not a matching tag), and
+  # pub.dev cannot create a package, so v1.0.0 of each must be published by hand
+  # with `dart pub publish` first.
   pub:
     needs: resolve
     if: needs.resolve.outputs.sdk == 'dart' || needs.resolve.outputs.sdk == 'flutter'
     runs-on: ubuntu-latest
     environment: release
     permissions:
+      contents: read
       id-token: write      # pub.dev automated publishing — no credentials file
     steps:
       - uses: actions/checkout@v4
@@ -201,19 +357,52 @@ jobs:
       - run: dart pub publish --force
         working-directory: ${{ needs.resolve.outputs.sdk }}
 
+  # ── Maven Central: token + GPG ─────────────────────────────────────────────
+  # No OIDC path exists here. Central authenticates with a portal token AND
+  # verifies a GPG signature on every artifact against the public keyservers, so
+  # all four secrets below are load-bearing.
+  #
+  # The two credential secrets were MAVEN_CENTRAL_USERNAME / MAVEN_CENTRAL_PASSWORD
+  # in this repo and OSSRH_USERNAME / OSSRH_TOKEN in misarmail-sdks and
+  # misarblog-sdks: one Central credential pair under two names across the fleet,
+  # so setting it up meant knowing which repo used which. Renamed to the sibling
+  # spelling. Nothing has ever published from here, so the rename breaks nothing.
   maven:
     needs: resolve
     if: needs.resolve.outputs.sdk == 'java' || needs.resolve.outputs.sdk == 'kotlin'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Ahead of setup-java, which is where the GPG key is imported: handed an
+      # empty key it neither signs nor complains, and the failure resurfaces
+      # much later as Central rejecting unsigned artifacts.
+      - name: Require the Maven Central credentials
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          MISSING=""
+          [ -n "${OSSRH_USERNAME:-}" ]  || MISSING="$MISSING OSSRH_USERNAME"
+          [ -n "${OSSRH_TOKEN:-}" ]     || MISSING="$MISSING OSSRH_TOKEN"
+          [ -n "${GPG_PRIVATE_KEY:-}" ] || MISSING="$MISSING GPG_PRIVATE_KEY"
+          [ -n "${GPG_PASSPHRASE:-}" ]  || MISSING="$MISSING GPG_PASSPHRASE"
+          if [ -n "$MISSING" ]; then
+            echo "::error::missing secret(s):$MISSING — Maven Central needs a portal token (OSSRH_USERNAME/OSSRH_TOKEN) and a GPG signing key (GPG_PRIVATE_KEY/GPG_PASSPHRASE). Add them under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
       - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           server-id: central
-          server-username: MAVEN_CENTRAL_USERNAME
-          server-password: MAVEN_CENTRAL_PASSWORD
+          # These name the ENV VARS that the generated settings.xml reads, not
+          # the values themselves.
+          server-username: OSSRH_USERNAME
+          server-password: OSSRH_TOKEN
           # Central validates every signature against public keyservers and
           # rejects anything unsigned, so this is a hard requirement.
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -222,15 +411,23 @@ jobs:
         run: mvn --batch-mode clean deploy
         working-directory: java
         env:
-          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      # The env var NAMES here are dictated by kotlin/build.gradle.kts, which
+      # reads OSSRH_USERNAME / OSSRH_PASSWORD for the Central repository and
+      # MAVEN_GPG_PRIVATE_KEY / MAVEN_GPG_PASSPHRASE for useInMemoryPgpKeys.
+      # This job used to export MAVEN_CENTRAL_* and MAVEN_GPG_PASSPHRASE, none
+      # of which Gradle looks at, so it would have published with blank
+      # credentials and no signing key at all.
       - if: needs.resolve.outputs.sdk == 'kotlin'
         run: ./gradlew publish --no-daemon
         working-directory: kotlin
         env:
-          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
   # ── Go: validate only ──────────────────────────────────────────────────────
@@ -249,9 +446,25 @@ jobs:
       - run: go build ./... && go vet ./... && go test ./...
         working-directory: go
       - name: Warm the module proxy
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
-          curl -sS "https://proxy.golang.org/github.com/!misar-!a!i/misarreach-sdks/go/@v/go%2Fv${{ needs.resolve.outputs.version }}.info" \
-            || echo "not indexed yet — the proxy will fetch on first use"
+          set -euo pipefail
+          # The proxy escapes capitals as !<lower>, so Misar-AI is !misar-!a!i.
+          # The version is plain semver: `go/` is part of the MODULE path, not
+          # of the version, so the tag go/v1.2.3 is version v1.2.3 of the module
+          # github.com/Misar-AI/misarreach-sdks/go. The old URL asked for a
+          # version literally named `go/v1.2.3`, which cannot exist.
+          URL="https://proxy.golang.org/github.com/!misar-!a!i/misarreach-sdks/go/@v/v${VERSION}.info"
+          # Guarded on the VALUE. The old `curl … || echo` never fired: without
+          # -f curl exits 0 on a 404, so the fallback was unreachable and a
+          # missing module looked identical to a warmed one.
+          INFO="$(curl -sS -f --max-time 30 "$URL" || true)"
+          if [ -z "$INFO" ]; then
+            echo "::notice::v${VERSION} is not indexed yet — the proxy will fetch it on the first \`go get\`"
+          else
+            echo "proxy already serves v${VERSION}: $INFO"
+          fi
 
   # ── Swift: validate only ───────────────────────────────────────────────────
   # Swift PM consumers depend on this git URL directly; the tag is the release.
@@ -273,6 +486,7 @@ jobs:
 
   # PHP has no job here. Packagist reads composer.json from a repository ROOT and
   # cannot index a subdirectory, so it tracks Misar-AI/misarreach-php — which
-  # split-standalone.yml populates and tags. The re-crawl request lives there,
-  # after the tag exists, because asking Packagist to re-crawl before the tag is
-  # pushed just makes it read the previous release.
+  # split-standalone.yml populates and tags. Both Packagist calls live there,
+  # after the tag exists: the submission that registers the package in the first
+  # place, and the re-crawl. Asking Packagist to look before the tag is pushed
+  # just makes it re-read the previous release.
