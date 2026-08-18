@@ -18,6 +18,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# NOTE: flutter is deliberately absent. The product ships ONE pure-Dart
+# package per product that works from Dart CLI, Dart server and Flutter on
+# all five platforms. The former <product>_flutter packages are
+# discontinued on pub.dev and are no longer built or published from here.
+
 jobs:
   tag:
     outputs:
@@ -31,8 +36,6 @@ jobs:
       version_ruby: ${{ steps.tag.outputs.version_ruby }}
       publish_dart: ${{ steps.tag.outputs.publish_dart }}
       version_dart: ${{ steps.tag.outputs.version_dart }}
-      publish_flutter: ${{ steps.tag.outputs.publish_flutter }}
-      version_flutter: ${{ steps.tag.outputs.version_flutter }}
       publish_java: ${{ steps.tag.outputs.publish_java }}
       version_java: ${{ steps.tag.outputs.version_java }}
       publish_kotlin: ${{ steps.tag.outputs.publish_kotlin }}
@@ -148,7 +151,7 @@ jobs:
           git config user.email "ci@misar.io"
 
           TAGGED=0
-          for LANG in typescript python rust ruby dart flutter java kotlin csharp; do
+          for LANG in typescript python rust ruby dart java kotlin csharp; do
             NOW="$(version_at HEAD "$LANG" || true)"
             [ -n "$NOW" ] || continue
 
@@ -286,17 +289,6 @@ jobs:
       version: ${{ needs.tag.outputs.version_dart }}
     secrets: inherit
 
-  publish-flutter:
-    needs: tag
-    if: needs.tag.outputs.publish_flutter == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: flutter
-      version: ${{ needs.tag.outputs.version_flutter }}
-    secrets: inherit
 
   publish-java:
     needs: tag

@@ -55,7 +55,7 @@ on:
         description: 'SDK to publish'
         required: true
         type: choice
-        options: [typescript, python, rust, ruby, dart, flutter, java, kotlin, csharp, go, swift, php]
+        options: [typescript, python, rust, ruby, dart, java, kotlin, csharp, go, swift, php]
       version:
         description: 'Version (must match the manifest)'
         required: true
@@ -96,7 +96,7 @@ jobs:
             fi
           fi
 
-          KNOWN="typescript python rust ruby dart flutter java kotlin csharp go swift php"
+          KNOWN="typescript python rust ruby dart java kotlin csharp go swift php"
           if [[ " $KNOWN " != *" $SDK "* ]]; then
             echo "::error::Unknown SDK '$SDK'"; exit 1
           fi
@@ -339,8 +339,6 @@ jobs:
   #     "Enable publishing from GitHub Actions"
   #       Repository:  Misar-AI/misarreach-sdks
   #       Tag-pattern: dart/v{{version}}
-  #   pub.dev/packages/misar_reach_flutter/admin → same, but
-  #       Tag-pattern: flutter/v{{version}}
   #   Optionally tick "Require GitHub Actions environment" and enter `release`,
   #   which is the environment this job runs in.
   #
@@ -352,7 +350,7 @@ jobs:
   # with `dart pub publish` first.
   pub:
     needs: resolve
-    if: needs.resolve.outputs.sdk == 'dart' || needs.resolve.outputs.sdk == 'flutter'
+    if: needs.resolve.outputs.sdk == 'dart'
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -361,19 +359,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The flutter package declares `flutter: sdk: flutter`, which plain dart
-      # cannot resolve — `dart pub get` fails with "Flutter users should use
-      # `flutter pub` instead of `dart pub`". Installing the Flutter SDK puts a
-      # dart on PATH that resolves both, so one job still covers both packages.
-      - if: needs.resolve.outputs.sdk == 'dart'
-        uses: dart-lang/setup-dart@v1
-      - if: needs.resolve.outputs.sdk == 'flutter'
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
+      - uses: dart-lang/setup-dart@v1
 
       # pub.dev's automated publishing is configured per EXISTING package, so it
-      # cannot create misar_reach or misar_reach_flutter on their first release.
+      # cannot create the misarreach package on its first release.
       # When PUB_CREDENTIALS is present it is written to the credentials file and
       # used; when it is absent the step is skipped and the OIDC path applies
       # exactly as before. Remove this once both packages exist and automated
