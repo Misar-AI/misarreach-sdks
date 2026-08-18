@@ -7,7 +7,7 @@
 
     <groupId>io.misar</groupId>
     <artifactId>misarreach-java</artifactId>
-    <version>5.0.0</version>
+    <version>5.0.1</version>
     <packaging>jar</packaging>
 
     <name>MisarReach Java SDK</name>

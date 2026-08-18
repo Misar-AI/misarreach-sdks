@@ -24,14 +24,14 @@ Maven:
 <dependency>
     <groupId>io.misar</groupId>
     <artifactId>misarreach-java</artifactId>
-    <version>5.0.0</version>
+    <version>5.0.1</version>
 </dependency>
 ```
 
 Gradle (Kotlin or Groovy DSL):
 
 ```kotlin
-implementation("io.misar:misarreach-java:5.0.0")
+implementation("io.misar:misarreach-java:5.0.1")
 ```
 
 Requires Java 17+. The only declared runtime dependency is

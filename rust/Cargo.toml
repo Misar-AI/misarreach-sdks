@@ -1,6 +1,6 @@
 [package]
 name = "misarreach"
-version = "5.0.0"
+version = "5.0.1"
 edition = "2021"
 description = "Async client for the MisarReach outreach and lead-generation API: lead-finder jobs across 23 sources with SSE progress streaming, CRM contacts, deals and pipeline, multi-step email/SMS/WhatsApp/push campaigns, an AI sales agent and autopilot, plus typed plan-limit refusals."
 license = "MIT"

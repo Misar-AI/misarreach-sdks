@@ -338,26 +338,36 @@ jobs:
       version: ${{ needs.tag.outputs.version_go }}
     secrets: inherit
 
+  # swift does not publish through publish.yml — Packagist and Swift PM read a
+  # repository ROOT, so the release is the standalone repo that
+  # split-standalone.yml populates and tags. Calling it here is what makes
+  # that happen inside this run; its `push: tags:` trigger cannot fire for a
+  # tag the tag job pushed with GITHUB_TOKEN.
   publish-swift:
     needs: tag
     if: needs.tag.outputs.publish_swift == 'true'
+    uses: ./.github/workflows/split-standalone.yml
     permissions:
       contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
+    secrets: inherit
     with:
-      sdk: swift
+      language: swift
       version: ${{ needs.tag.outputs.version_swift }}
     secrets: inherit
 
+  # php does not publish through publish.yml — Packagist and Swift PM read a
+  # repository ROOT, so the release is the standalone repo that
+  # split-standalone.yml populates and tags. Calling it here is what makes
+  # that happen inside this run; its `push: tags:` trigger cannot fire for a
+  # tag the tag job pushed with GITHUB_TOKEN.
   publish-php:
     needs: tag
     if: needs.tag.outputs.publish_php == 'true'
+    uses: ./.github/workflows/split-standalone.yml
     permissions:
       contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
+    secrets: inherit
     with:
-      sdk: php
+      language: php
       version: ${{ needs.tag.outputs.version_php }}
     secrets: inherit

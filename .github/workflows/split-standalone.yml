@@ -12,6 +12,16 @@ name: Split PHP/Swift to standalone repos
 on:
   push:
     tags: ['php/v*', 'swift/v*']
+  workflow_call:
+    inputs:
+      language:
+        description: 'Which SDK to split'
+        required: true
+        type: string
+      version:
+        description: 'Version to tag (without the leading v)'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       language:
