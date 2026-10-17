@@ -242,7 +242,7 @@ class MisarReachClient(
 
     // ── Resource: Lead Finder ──────────────────────────────────────────────────
 
-    /** Lead Finder — search, discover, enrich, verify, score, lists, saved searches, scoring rules, jobs. */
+    /** Lead Finder — search, discover, enrich, verify, score, lists, search history, scoring rules, jobs. */
     inner class LeadsResource {
         suspend fun account(): Map<String, Any> = request("GET", "/lead-finder/account")
         suspend fun config(): Map<String, Any> = request("GET", "/lead-finder/config")
@@ -280,10 +280,6 @@ class MisarReachClient(
         suspend fun lists(): Map<String, Any> = request("GET", "/lead-finder/lists")
         suspend fun createList(data: Map<String, Any>): Map<String, Any> = request("POST", "/lead-finder/lists", data)
         suspend fun syncList(listId: String, data: Map<String, Any>): Map<String, Any> = request("POST", "/lead-finder/lists/$listId/sync", data)
-
-        suspend fun savedSearches(): Map<String, Any> = request("GET", "/lead-finder/saved-searches")
-        suspend fun createSavedSearch(data: Map<String, Any>): Map<String, Any> = request("POST", "/lead-finder/saved-searches", data)
-        suspend fun deleteSavedSearch(id: String): Map<String, Any> = request("DELETE", "/lead-finder/saved-searches/$id")
 
         suspend fun scoringRules(): Map<String, Any> = request("GET", "/lead-finder/scoring-rules")
         suspend fun createScoringRule(data: Map<String, Any>): Map<String, Any> = request("POST", "/lead-finder/scoring-rules", data)

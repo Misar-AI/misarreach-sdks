@@ -271,7 +271,7 @@ class _Resource:
 
 class _LeadsResource(_Resource):
     """Lead Finder — search (23 sources), discover, enrich, verify, score, lists,
-    saved searches, scoring rules, recommendations, and the SSE job stream."""
+    search history, scoring rules, recommendations, and the SSE job stream."""
 
     def account(self) -> Any:
         return self._c._request("GET", "/lead-finder/account")
@@ -413,26 +413,6 @@ class _LeadsResource(_Resource):
 
     async def async_list(self, list_id: str, data: Optional[dict[str, Any]] = None) -> Any:
         return await self._c._arequest("POST", f"/lead-finder/lists/{quote(str(list_id), safe='')}/sync", data or {})
-
-    # ── Saved searches ───────────────────────────────────────────────────────────
-
-    def saved_searches(self) -> Any:
-        return self._c._request("GET", "/lead-finder/saved-searches")
-
-    async def asaved_searches(self) -> Any:
-        return await self._c._arequest("GET", "/lead-finder/saved-searches")
-
-    def create_saved_search(self, data: dict[str, Any]) -> Any:
-        return self._c._request("POST", "/lead-finder/saved-searches", data)
-
-    async def acreate_saved_search(self, data: dict[str, Any]) -> Any:
-        return await self._c._arequest("POST", "/lead-finder/saved-searches", data)
-
-    def delete_saved_search(self, id: str) -> Any:
-        return self._c._request("DELETE", f"/lead-finder/saved-searches/{quote(str(id), safe='')}")
-
-    async def adelete_saved_search(self, id: str) -> Any:
-        return await self._c._arequest("DELETE", f"/lead-finder/saved-searches/{quote(str(id), safe='')}")
 
     # ── Scoring rules ────────────────────────────────────────────────────────────
 
@@ -1146,13 +1126,6 @@ class _LeadFinderResource(_Resource):
 
     async def async_list(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         return await self._c._arequest("POST", f"/lead-finder/lists/{id}/sync", data or {})
-
-    def remove_saved_search(self, id: str) -> dict[str, Any]:
-        """DELETE /lead-finder/saved-searches/:id"""
-        return self._c._request("DELETE", f"/lead-finder/saved-searches/{id}")
-
-    async def aremove_saved_search(self, id: str) -> dict[str, Any]:
-        return await self._c._arequest("DELETE", f"/lead-finder/saved-searches/{id}")
 
     def update_scoring_rule(self, id: str, data: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """PATCH /lead-finder/scoring-rules/:id"""

@@ -54,7 +54,7 @@ export class LeadsResource {
     return this.request("POST", `/lead-finder/jobs/${jobId}/feedback`, body);
   }
 
-  /** Enrich a lead via Hunter.io (person + company data). Consumes enrichment credits. */
+  /** Enrich a lead with person and company data. Consumes enrichment credits. */
   enrich(params: EnrichLeadParams): Promise<EnrichLeadResponse> {
     return this.request("POST", "/lead-finder/enrich", params);
   }
@@ -64,7 +64,7 @@ export class LeadsResource {
     return this.request("POST", "/lead-finder/verify", params);
   }
 
-  /** Discover companies via Hunter.io. Optionally fetch contact emails. */
+  /** Discover companies matching firmographic filters. Optionally fetch contact emails. */
   discoverCompanies(params: DiscoverCompaniesParams): Promise<DiscoverCompaniesResponse> {
     return this.request("POST", "/lead-finder/discover", params);
   }
@@ -74,17 +74,17 @@ export class LeadsResource {
     return this.request("POST", "/lead-finder/score", params);
   }
 
-  /** List Hunter.io lead lists associated with the account. */
+  /** List the managed lead lists this account created or synced. */
   listLeadLists(): Promise<LeadListsResponse> {
     return this.request("GET", "/lead-finder/lists");
   }
 
-  /** Create a new Hunter.io lead list. */
+  /** Create a new, empty managed lead list. */
   createLeadList(name: string): Promise<{ list: LeadList }> {
     return this.request("POST", "/lead-finder/lists", { name });
   }
 
-  /** Sync a Hunter.io lead list into local lead records. */
+  /** Sync a managed lead list into local lead records. */
   syncLeadList(listId: number): Promise<SyncLeadListResponse> {
     return this.request("POST", `/lead-finder/lists/${listId}/sync`);
   }

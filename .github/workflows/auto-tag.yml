@@ -18,36 +18,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# NOTE: flutter is deliberately absent. The product ships ONE pure-Dart
-# package per product that works from Dart CLI, Dart server and Flutter on
-# all five platforms. The former <product>_flutter packages are
-# discontinued on pub.dev and are no longer built or published from here.
-
 jobs:
   tag:
-    outputs:
-      publish_typescript: ${{ steps.tag.outputs.publish_typescript }}
-      version_typescript: ${{ steps.tag.outputs.version_typescript }}
-      publish_python: ${{ steps.tag.outputs.publish_python }}
-      version_python: ${{ steps.tag.outputs.version_python }}
-      publish_rust: ${{ steps.tag.outputs.publish_rust }}
-      version_rust: ${{ steps.tag.outputs.version_rust }}
-      publish_ruby: ${{ steps.tag.outputs.publish_ruby }}
-      version_ruby: ${{ steps.tag.outputs.version_ruby }}
-      publish_dart: ${{ steps.tag.outputs.publish_dart }}
-      version_dart: ${{ steps.tag.outputs.version_dart }}
-      publish_java: ${{ steps.tag.outputs.publish_java }}
-      version_java: ${{ steps.tag.outputs.version_java }}
-      publish_kotlin: ${{ steps.tag.outputs.publish_kotlin }}
-      version_kotlin: ${{ steps.tag.outputs.version_kotlin }}
-      publish_csharp: ${{ steps.tag.outputs.publish_csharp }}
-      version_csharp: ${{ steps.tag.outputs.version_csharp }}
-      publish_go: ${{ steps.tag.outputs.publish_go }}
-      version_go: ${{ steps.tag.outputs.version_go }}
-      publish_swift: ${{ steps.tag.outputs.publish_swift }}
-      version_swift: ${{ steps.tag.outputs.version_swift }}
-      publish_php: ${{ steps.tag.outputs.publish_php }}
-      version_php: ${{ steps.tag.outputs.version_php }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -80,31 +52,13 @@ jobs:
           RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           if [ -z "${RELEASE_TOKEN:-}" ]; then
-            echo "::notice::RELEASE_TOKEN is not set. That is fine: the publish jobs below call publish.yml directly inside this run, so nothing depends on the tag raising an event. RELEASE_TOKEN now only matters as a fallback push token for split-standalone.yml."
+            echo "::warning::RELEASE_TOKEN is not set. Tags will be created with GITHUB_TOKEN, which cannot trigger publish.yml — each SDK will need publish.yml run manually. See the comment in this file."
           else
-            echo "RELEASE_TOKEN present — tags will additionally raise a tag event, which publish.yml also listens for."
+            echo "RELEASE_TOKEN present — tags will trigger publish.yml."
           fi
 
       - name: Tag every SDK whose version changed
-        id: tag
-        env:
-          TARGETS: ${{ vars.SDK_PUBLISH_TARGETS }}
         run: |
-          # SAFETY GATE. Tagging is releasing: publish.yml triggers on these
-          # tags. SDK_PUBLISH_TARGETS names the languages allowed to be tagged;
-          # unset means dry run, which is the default, because a bump that
-          # touches every SDK would otherwise release the whole fleet at once
-          # and a published version can never be replaced.
-          #
-          # Gating this loop is sufficient for the fleet and bare tags below:
-          # both are conditioned on TAGGED > 0, which only increments here.
-          GATE=",$(echo "${TARGETS:-}" | tr -d '[:space:]'),"
-          if [ "$GATE" = ",," ]; then
-            echo "::notice::SDK_PUBLISH_TARGETS is unset — DRY RUN, nothing will be tagged."
-          else
-            echo "::notice::Tagging enabled for: ${TARGETS}"
-          fi
-
           set -euo pipefail
 
           # Read the shipped version out of one SDK's manifest at a given ref.
@@ -151,7 +105,7 @@ jobs:
           git config user.email "ci@misar.io"
 
           TAGGED=0
-          for LANG in typescript python rust ruby dart java kotlin csharp; do
+          for LANG in typescript python rust ruby dart flutter java kotlin csharp; do
             NOW="$(version_at HEAD "$LANG" || true)"
             [ -n "$NOW" ] || continue
 
@@ -169,20 +123,10 @@ jobs:
               continue
             fi
 
-            if ! echo "$GATE" | grep -q ",${LANG}," && ! echo "$GATE" | grep -q ",all,"; then
-              echo "🔒 would tag $TAG — withheld, $LANG not in SDK_PUBLISH_TARGETS"
-              echo "- \`$TAG\` withheld (gate)" >> "$GITHUB_STEP_SUMMARY"
-              continue
-            fi
-
             echo "+ $TAG"
             git tag "$TAG"
             git push origin "$TAG"
             TAGGED=$((TAGGED + 1))
-            # Recorded so the publish jobs below can run in THIS run rather than
-            # waiting for a tag event that GITHUB_TOKEN will never raise.
-            echo "publish_${LANG}=true" >> "$GITHUB_OUTPUT"
-            echo "version_${LANG}=${NOW}" >> "$GITHUB_OUTPUT"
           done
 
           # go, swift and php carry no manifest version. They ride the release
@@ -200,8 +144,6 @@ jobs:
                 echo "+ $TAG (tag-versioned SDK, riding fleet version)"
                 git tag "$TAG"
                 git push origin "$TAG"
-                echo "publish_${LANG}=true" >> "$GITHUB_OUTPUT"
-                echo "version_${LANG}=${FLEET}" >> "$GITHUB_OUTPUT"
               done
 
               # Swift PM additionally needs a BARE semver tag. It reads versions
@@ -224,148 +166,3 @@ jobs:
           fi
 
           echo "Tagged $TAGGED versioned SDK(s)."
-
-  # Each language publishes from inside THIS run, gated on the tag job having
-  # actually cut its tag. `uses:` cannot be built from a variable, so this is one
-  # literal job per language rather than a matrix.
-
-  publish-typescript:
-    needs: tag
-    if: needs.tag.outputs.publish_typescript == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: typescript
-      version: ${{ needs.tag.outputs.version_typescript }}
-    secrets: inherit
-
-  publish-python:
-    needs: tag
-    if: needs.tag.outputs.publish_python == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: python
-      version: ${{ needs.tag.outputs.version_python }}
-    secrets: inherit
-
-  publish-rust:
-    needs: tag
-    if: needs.tag.outputs.publish_rust == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: rust
-      version: ${{ needs.tag.outputs.version_rust }}
-    secrets: inherit
-
-  publish-ruby:
-    needs: tag
-    if: needs.tag.outputs.publish_ruby == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: ruby
-      version: ${{ needs.tag.outputs.version_ruby }}
-    secrets: inherit
-
-  publish-dart:
-    needs: tag
-    if: needs.tag.outputs.publish_dart == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: dart
-      version: ${{ needs.tag.outputs.version_dart }}
-    secrets: inherit
-
-
-  publish-java:
-    needs: tag
-    if: needs.tag.outputs.publish_java == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: java
-      version: ${{ needs.tag.outputs.version_java }}
-    secrets: inherit
-
-  publish-kotlin:
-    needs: tag
-    if: needs.tag.outputs.publish_kotlin == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: kotlin
-      version: ${{ needs.tag.outputs.version_kotlin }}
-    secrets: inherit
-
-  publish-csharp:
-    needs: tag
-    if: needs.tag.outputs.publish_csharp == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: csharp
-      version: ${{ needs.tag.outputs.version_csharp }}
-    secrets: inherit
-
-  publish-go:
-    needs: tag
-    if: needs.tag.outputs.publish_go == 'true'
-    permissions:
-      contents: read
-      id-token: write   # a called workflow can only narrow its caller's token
-    uses: ./.github/workflows/publish.yml
-    with:
-      sdk: go
-      version: ${{ needs.tag.outputs.version_go }}
-    secrets: inherit
-
-  # swift does not publish through publish.yml — Packagist and Swift PM read a
-  # repository ROOT, so the release is the standalone repo that
-  # split-standalone.yml populates and tags. Calling it here is what makes
-  # that happen inside this run; its `push: tags:` trigger cannot fire for a
-  # tag the tag job pushed with GITHUB_TOKEN.
-  publish-swift:
-    needs: tag
-    if: needs.tag.outputs.publish_swift == 'true'
-    uses: ./.github/workflows/split-standalone.yml
-    permissions:
-      contents: read
-    secrets: inherit
-    with:
-      language: swift
-      version: ${{ needs.tag.outputs.version_swift }}
-
-  # php does not publish through publish.yml — Packagist and Swift PM read a
-  # repository ROOT, so the release is the standalone repo that
-  # split-standalone.yml populates and tags. Calling it here is what makes
-  # that happen inside this run; its `push: tags:` trigger cannot fire for a
-  # tag the tag job pushed with GITHUB_TOKEN.
-  publish-php:
-    needs: tag
-    if: needs.tag.outputs.publish_php == 'true'
-    uses: ./.github/workflows/split-standalone.yml
-    permissions:
-      contents: read
-    secrets: inherit
-    with:
-      language: php
-      version: ${{ needs.tag.outputs.version_php }}

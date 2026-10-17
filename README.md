@@ -1,6 +1,6 @@
 # MisarReach SDKs
 
-Official client libraries for the [MisarReach](https://reach.misar.io) API —
+Official client libraries for the [MisarReach](https://misarreach.com) API —
 lead finder, multi-channel outreach, deals/pipeline CRM, autopilot and the AI
 sales agent.
 
@@ -8,7 +8,7 @@ Every SDK covers the full public API surface: all 69 documented endpoints plus
 the SSE stream for lead-finder job progress. They speak only HTTPS and
 server-sent events, and authenticate with a MisarReach developer key
 (`mrk_…`) — create one at
-[reach.misar.io/settings/api-keys](https://reach.misar.io/settings/api-keys).
+[misarreach.com/settings?tab=api-keys](https://misarreach.com/settings?tab=api-keys).
 
 ## Install
 
@@ -19,8 +19,7 @@ server-sent events, and authenticate with a MisarReach developer key
 | Rust | crates.io | `misarreach` |
 | Ruby | RubyGems | `misarreach` |
 | PHP | Packagist | `misarai/misarreach-php` |
-| Dart | pub.dev | `misar_reach` |
-| Flutter | pub.dev | `misar_reach_flutter` |
+| Dart / Flutter | pub.dev | `misarreach` |
 | C# / .NET | NuGet | `Misar.Reach` |
 | Java | Maven Central | `io.misar:misarreach-java` |
 | Kotlin | Maven Central | `io.misar:misarreach-kotlin` |
@@ -52,7 +51,7 @@ Quotas are enforced server-side against the subscription that owns the API key,
 not in the client. A request beyond your plan's allowance returns `402` with the
 limit that was hit; a `503` with `"retry": true` means the quota could not be
 verified and the request was refused rather than allowed through. Rates and
-credits are documented at [reach.misar.io/docs](https://reach.misar.io/docs).
+credits are documented at [misarreach.com/docs](https://misarreach.com/docs).
 
 ## Releases
 

@@ -156,9 +156,6 @@ Every public method, grouped the way the client groups them.
 | `listLeadLists()` | Lead lists in the workspace. |
 | `createLeadList()` | Create a lead list. |
 | `syncLeadList()` | Sync a lead list to its connected destination. |
-| `savedSearches()` | Saved search definitions. |
-| `createSavedSearch()` | Save a search for reuse. |
-| `deleteSavedSearch()` | Delete a saved search. |
 | `scoringRules()` | Lead-scoring rules for this workspace. |
 | `createScoringRule()` | Create a lead-scoring rule. |
 | `updateScoringRule()` | Update a lead-scoring rule. |
@@ -568,4 +565,4 @@ blocked until a CAN-SPAM sender postal address is set via
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **Packagist** — https://packagist.org/packages/misarai/misarreach-php
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

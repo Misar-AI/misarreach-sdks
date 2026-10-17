@@ -25,7 +25,7 @@ Or add it by hand:
 ```yaml
 # pubspec.yaml
 dependencies:
-  misarreach: ^5.0.3
+  misarreach: ^5.0.4
 ```
 
 Requires Dart `>=3.0.0 <4.0.0` and pulls in `http: ^1.2.0`. The client imports
@@ -157,9 +157,6 @@ Every public method, grouped the way the client groups them.
 | `lists()` | Lead lists in the workspace. |
 | `createList()` | Create a lead list. |
 | `syncList()` | Sync a lead list to its connected destination. |
-| `savedSearches()` | Saved search definitions. |
-| `createSavedSearch()` | Save a search for reuse. |
-| `deleteSavedSearch()` | Delete a saved search. |
 | `scoringRules()` | Lead-scoring rules for this workspace. |
 | `createScoringRule()` | Create a lead-scoring rule. |
 | `updateScoringRule()` | Update a lead-scoring rule. |
@@ -553,4 +550,4 @@ blocked until a CAN-SPAM sender postal address is set via
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **pub.dev** — https://pub.dev/packages/misarreach
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

@@ -70,9 +70,31 @@ export interface LeadSearchJob {
   filters: LeadSearchFilters | null;
 }
 
+/**
+ * A business the search FOUND and did NOT qualify.
+ *
+ * NOT a `Lead`, and deliberately not shaped like one: no email, no id, no score.
+ * It is stored on the job (not in the leads table), it is never returned in
+ * `results`, and it must never be exported, added to a segment or mailed. It
+ * exists so a search that qualifies nothing can show what it looked at and why
+ * none of it counted, instead of an empty array.
+ */
+export interface NonQualifyingCandidate {
+  business: string;
+  location: string | null;
+  phone: string | null;
+  website: string | null;
+  source: string;
+  /** Plain-language reason this record did not qualify. */
+  reason: string;
+  reasons: string[];
+}
+
 export interface JobStatusResponse {
   job: LeadSearchJob;
   results: Lead[];
+  /** Near-misses, separate from `results`. See {@link NonQualifyingCandidate}. */
+  candidates: NonQualifyingCandidate[];
 }
 
 export interface JobFeedbackParams {
@@ -114,12 +136,119 @@ export interface VerifyEmailsParams {
   emails?: string[];
 }
 
+/**
+ * `valid`, `invalid`, `accept_all` (a catch-all domain: every address is
+ * accepted, so this one cannot be confirmed — never treat it as valid),
+ * `webmail`, `disposable` or `unknown`.
+ */
+export type EmailVerifyStatus = "valid" | "invalid" | "accept_all" | "webmail" | "disposable" | "unknown";
+
 export interface VerifyEmailsResponse {
   results: Array<{
     email: string;
-    status: string;
-    deliverable: boolean;
+    /** `null` while the check is still pending. */
+    status: EmailVerifyStatus | null;
+    score: number | null;
+    /** `true` on a catch-all domain (status is then `accept_all`); `null` when it could not be tested. */
+    catch_all: boolean | null;
+    /** `true` when the check could not finish yet — call again later. */
+    pending: boolean;
+    /** @deprecated Never returned by the API; read `status` instead. */
+    deliverable?: boolean;
   }>;
+  /** Addresses that got a verdict. */
+  verified: number;
+}
+
+/** GET /lead-finder/companies/:domain/site — what a company's own website publishes. */
+export interface CompanySiteReveal {
+  domain: string;
+  /** Pages actually read (0 = the site could not be read). */
+  pages_checked: number;
+  emails: string[];
+  phone: { published: string; e164: string | null } | null;
+  published_name: string | null;
+  profiles: {
+    linkedin: string | null;
+    x: { url: string; handle: string | null } | null;
+    instagram: string | null;
+    facebook: string | null;
+    github: string | null;
+    youtube: string | null;
+    telegram: string | null;
+    whatsapp: string | null;
+  };
+  technologies: string[];
+  technology_categories: Record<string, string[]>;
+  /** Whether anything usable to reach the company was found. */
+  has_contact: boolean;
+  /** Whether this call consumed an enrichment credit. */
+  charged: boolean;
+}
+
+/** The person a brief's outreach message is written to. All optional. */
+export interface CompanyBriefParams {
+  name?: string;
+  role?: string;
+  company?: string;
+}
+
+export interface CompanyBrief {
+  core_offer: string;
+  target_audience: string | null;
+  /** A likely priority — an inference, labelled as one. */
+  growth_bottleneck: string | null;
+  email_opening_hook: string | null;
+}
+
+/** GET /lead-finder/suggest */
+export interface SearchSuggestions {
+  ok: true;
+  /** At most six completions of what was typed; `[]` when there are none. */
+  suggestions: string[];
+}
+
+/** A recent public fact about the company, with the pages it was read from. */
+export interface CompanyRecentFact {
+  fact: string;
+  sources: string[];
+}
+
+/** POST /lead-finder/companies/:domain/brief */
+export interface CompanyBriefResponse {
+  domain: string;
+  /** `null` when no brief could be written; `reason` and `note` then say why. */
+  brief: CompanyBrief | null;
+  /**
+   * Up to five recent public facts (funding, launches, news, hiring), each with
+   * its sources; `[]` when none are available. Absent from servers before 2026-10.
+   */
+  recent?: CompanyRecentFact[];
+  reason?: "site_unreadable" | "not_enough_text" | "ai_unavailable" | "no_usable_answer";
+  note?: string;
+  /** The message for the named person, or `null` when no name was given. */
+  message: string | null;
+}
+
+export interface EmailPatternShare {
+  pattern: string;
+  /** "{first}.{last}@acme.com", or null for the "other" bucket. */
+  template: string | null;
+  /** The pattern applied to the placeholder name Jane Doe. */
+  example: string | null;
+  count: number;
+  /** 0..1 */
+  share: number;
+}
+
+/** GET /public/email-formats/:domain — learned only from verified-deliverable addresses. */
+export interface EmailFormatSummary {
+  domain: string;
+  verifiedAddresses: number;
+  top: EmailPatternShare;
+  patterns: EmailPatternShare[];
+  confidence: "high" | "medium" | "low";
+  computedAt: string;
 }
 
 export interface DiscoverCompaniesParams {

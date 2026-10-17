@@ -145,9 +145,6 @@ Every public method, grouped the way the client groups them.
 | `lists` | Lead lists in the workspace. |
 | `create_list` | Create a lead list. |
 | `sync_list` | Sync a lead list to its connected destination. |
-| `saved_searches` | Saved search definitions. |
-| `create_saved_search` | Save a search for reuse. |
-| `delete_saved_search` | Delete a saved search. |
 | `scoring_rules` | Lead-scoring rules for this workspace. |
 | `create_scoring_rule` | Create a lead-scoring rule. |
 | `update_scoring_rule` | Update a lead-scoring rule. |
@@ -539,4 +536,4 @@ blocked until a CAN-SPAM sender postal address is set via
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **RubyGems** — https://rubygems.org/gems/misarreach
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

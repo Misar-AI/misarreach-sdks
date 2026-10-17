@@ -91,21 +91,6 @@ class LeadsResource
         return $this->client->request('POST', "/lead-finder/lists/{$listId}/sync", $data);
     }
 
-    public function savedSearches(): array
-    {
-        return $this->client->request('GET', '/lead-finder/saved-searches');
-    }
-
-    public function createSavedSearch(array $data): array
-    {
-        return $this->client->request('POST', '/lead-finder/saved-searches', $data);
-    }
-
-    public function deleteSavedSearch(string $id): array
-    {
-        return $this->client->request('DELETE', "/lead-finder/saved-searches/{$id}");
-    }
-
     public function scoringRules(): array
     {
         return $this->client->request('GET', '/lead-finder/scoring-rules');

@@ -55,11 +55,6 @@ func (r *LeadFinderResource) SyncList(ctx context.Context, id string, body inter
 	return r.c.do(ctx, http.MethodPost, "/lead-finder/lists/"+url.PathEscape(id)+"/sync", body)
 }
 
-// RemoveSavedSearch calls DELETE /lead-finder/saved-searches/:id.
-func (r *LeadFinderResource) RemoveSavedSearch(ctx context.Context, id string) (Response, error) {
-	return r.c.do(ctx, http.MethodDelete, "/lead-finder/saved-searches/"+url.PathEscape(id), nil)
-}
-
 // UpdateScoringRule calls PATCH /lead-finder/scoring-rules/:id.
 func (r *LeadFinderResource) UpdateScoringRule(ctx context.Context, id string, body interface{}) (Response, error) {
 	return r.c.do(ctx, http.MethodPatch, "/lead-finder/scoring-rules/"+url.PathEscape(id), body)

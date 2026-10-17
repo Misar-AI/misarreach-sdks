@@ -83,16 +83,6 @@ func (r *LeadsResource) SyncList(ctx context.Context, listID string, body interf
 	return r.c.do(ctx, http.MethodPost, "/lead-finder/lists/"+esc(listID)+"/sync", body)
 }
 
-func (r *LeadsResource) SavedSearches(ctx context.Context) (Response, error) {
-	return r.c.do(ctx, http.MethodGet, "/lead-finder/saved-searches", nil)
-}
-func (r *LeadsResource) CreateSavedSearch(ctx context.Context, body interface{}) (Response, error) {
-	return r.c.do(ctx, http.MethodPost, "/lead-finder/saved-searches", body)
-}
-func (r *LeadsResource) DeleteSavedSearch(ctx context.Context, id string) (Response, error) {
-	return r.c.do(ctx, http.MethodDelete, "/lead-finder/saved-searches/"+esc(id), nil)
-}
-
 func (r *LeadsResource) ScoringRules(ctx context.Context) (Response, error) {
 	return r.c.do(ctx, http.MethodGet, "/lead-finder/scoring-rules", nil)
 }

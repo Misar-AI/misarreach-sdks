@@ -22,8 +22,8 @@ class AuthError extends MisarReachError {
 
 /// 404 — resource not found.
 class NotFoundError extends MisarReachError {
-  const NotFoundError(String message, {Map<String, dynamic>? body})
-      : super(404, message, code: 'not_found', body: body);
+  const NotFoundError(String message, {super.body})
+      : super(404, message, code: 'not_found');
 }
 
 /// 429 — rate limited. [retryAfter] carries seconds to wait when provided.
@@ -37,8 +37,8 @@ class RateLimitError extends MisarReachError {
     this.retryAfter,
     this.balance,
     this.freeRemaining,
-    Map<String, dynamic>? body,
-  }) : super(429, message, code: 'rate_limit', body: body);
+    super.body,
+  }) : super(429, message, code: 'rate_limit');
 }
 
 /// 429 with `upgrade: true` — the workspace plan must be upgraded to proceed.

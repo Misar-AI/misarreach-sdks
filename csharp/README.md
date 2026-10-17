@@ -19,14 +19,14 @@ other SDKs the surface is **flat**: there are no resource sub-objects, just
 ## Install
 
 ```bash
-dotnet add package Misar.Reach --version 5.0.3
+dotnet add package Misar.Reach --version 5.0.4
 ```
 
 Or in your `.csproj`:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Misar.Reach" Version="5.0.3" />
+  <PackageReference Include="Misar.Reach" Version="5.0.4" />
 </ItemGroup>
 ```
 
@@ -161,9 +161,6 @@ Every public method, grouped the way the client groups them.
 | `Leads_ListLeadListsAsync()` | Lead lists in the workspace. |
 | `Leads_CreateLeadListAsync()` | Create a lead list. |
 | `Leads_SyncLeadListAsync()` | Sync a lead list to its connected destination. |
-| `Leads_SavedSearchesAsync()` | Saved search definitions. |
-| `Leads_CreateSavedSearchAsync()` | Save a search for reuse. |
-| `Leads_DeleteSavedSearchAsync()` | Delete a saved search. |
 | `Leads_ScoringRulesAsync()` | Lead-scoring rules for this workspace. |
 | `Leads_CreateScoringRuleAsync()` | Create a lead-scoring rule. |
 | `Leads_UpdateScoringRuleAsync()` | Update a lead-scoring rule. |
@@ -595,4 +592,4 @@ blocked until a CAN-SPAM sender postal address is set via
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **NuGet** — https://www.nuget.org/packages/Misar.Reach
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

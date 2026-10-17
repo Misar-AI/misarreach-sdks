@@ -363,18 +363,6 @@ public sealed class MisarReachClient : IDisposable
     public Task<JsonElement> Leads_SyncLeadListAsync(string listId, object? payload = null, CancellationToken ct = default) =>
         RequestAsync(HttpMethod.Post, $"/lead-finder/lists/{listId}/sync", payload, ct);
 
-    /// <summary>GET /lead-finder/saved-searches</summary>
-    public Task<JsonElement> Leads_SavedSearchesAsync(CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Get, "/lead-finder/saved-searches", cancellationToken: ct);
-
-    /// <summary>POST /lead-finder/saved-searches</summary>
-    public Task<JsonElement> Leads_CreateSavedSearchAsync(object payload, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Post, "/lead-finder/saved-searches", payload, ct);
-
-    /// <summary>DELETE /lead-finder/saved-searches/{id}</summary>
-    public Task<JsonElement> Leads_DeleteSavedSearchAsync(string id, CancellationToken ct = default) =>
-        RequestAsync(HttpMethod.Delete, $"/lead-finder/saved-searches/{id}", cancellationToken: ct);
-
     /// <summary>GET /lead-finder/scoring-rules</summary>
     public Task<JsonElement> Leads_ScoringRulesAsync(CancellationToken ct = default) =>
         RequestAsync(HttpMethod.Get, "/lead-finder/scoring-rules", cancellationToken: ct);

@@ -107,19 +107,6 @@ module MisarReach
       @client.request(:post, "/lead-finder/lists/#{list_id}/sync", data)
     end
 
-    # ── Saved searches ──
-    def saved_searches(params = {})
-      @client.request(:get, "/lead-finder/saved-searches#{qs(params)}")
-    end
-
-    def create_saved_search(data)
-      @client.request(:post, "/lead-finder/saved-searches", data)
-    end
-
-    def delete_saved_search(id)
-      @client.request(:delete, "/lead-finder/saved-searches/#{id}")
-    end
-
     # ── Scoring rules ──
     def scoring_rules(params = {})
       @client.request(:get, "/lead-finder/scoring-rules#{qs(params)}")

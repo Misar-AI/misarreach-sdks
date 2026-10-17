@@ -10,10 +10,10 @@
 
     <!-- NuGet metadata -->
     <PackageId>Misar.Reach</PackageId>
-    <Version>5.0.3</Version>
-    <Authors>Misar AI</Authors>
-    <Company>Misar AI Technology Pvt Ltd</Company>
-    <Copyright>Copyright (c) Misar AI</Copyright>
+    <Version>5.0.4</Version>
+    <Authors>Misar.AI</Authors>
+    <Company>Misar.AI</Company>
+    <Copyright>Copyright (c) Misar.AI</Copyright>
     <Description>Async .NET client for the MisarReach outreach API: lead finder across 23 sources, CRM contacts, deals and pipeline, multi-step campaigns over email, SMS, WhatsApp, web push and social DMs, plus an AI sales agent and autopilot. 94 methods on one MisarReachClient cover every documented endpoint. Server-Sent Events carry live lead-search progress and synthesise a terminal event for a job that already finished; plan caps surface as a typed UpgradeRequiredException (HTTP 402, upgrade:true) that is never retried, while genuinely transient statuses retry with exponential back-off. Authenticates with an mrk_ key; targets net8.0 on System.Text.Json with no third-party dependencies.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://www.misarreach.com</PackageProjectUrl>

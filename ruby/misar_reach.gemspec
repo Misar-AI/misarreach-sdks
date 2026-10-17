@@ -1,7 +1,7 @@
 Gem::Specification.new do |spec|
   spec.name          = "misarreach"
-  spec.version       = "5.0.3"
-  spec.authors       = ["Misar AI"]
+  spec.version       = "5.0.4"
+  spec.authors       = ["Misar.AI"]
   spec.email         = ["hello@misar.io"]
   spec.summary       = "Ruby client for MisarReach: async lead finder with SSE streaming, CRM pipeline, multi-channel campaigns, AI sales agent, autopilot"
   spec.description   = "Ruby client for the MisarReach outreach and lead-generation API (api.misar.io/reach/api). " \

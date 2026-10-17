@@ -428,8 +428,8 @@ impl MisarReachClient {
 
 // ── Resource: Lead Finder ───────────────────────────────────────────────────────
 
-/// Lead Finder — search/discover/enrich/verify/score leads, lists, saved
-/// searches, scoring rules, recommendations, and the SSE job stream.
+/// Lead Finder — search/discover/enrich/verify/score leads, lists, search
+/// history, scoring rules, recommendations, and the SSE job stream.
 pub struct LeadsResource(Arc<Inner>);
 
 impl LeadsResource {
@@ -565,24 +565,6 @@ impl LeadsResource {
     pub async fn sync_list(&self, list_id: &str, data: Value) -> Result<Value, ReachError> {
         self.0
             .request(Method::POST, &format!("/lead-finder/lists/{}/sync", list_id), Some(data))
-            .await
-    }
-
-    // ── saved searches ──
-    /// GET /lead-finder/saved-searches
-    pub async fn saved_searches(&self) -> Result<Value, ReachError> {
-        self.0.get_with_params("/lead-finder/saved-searches", Value::Null).await
-    }
-
-    /// POST /lead-finder/saved-searches
-    pub async fn create_saved_search(&self, data: Value) -> Result<Value, ReachError> {
-        self.0.request(Method::POST, "/lead-finder/saved-searches", Some(data)).await
-    }
-
-    /// DELETE /lead-finder/saved-searches/{id}
-    pub async fn delete_saved_search(&self, id: &str) -> Result<Value, ReachError> {
-        self.0
-            .request(Method::DELETE, &format!("/lead-finder/saved-searches/{}", id), None)
             .await
     }
 

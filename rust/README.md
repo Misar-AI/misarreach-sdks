@@ -19,7 +19,7 @@ callback-driven SSE reader for lead-search progress. Talks to
 
 ```toml
 [dependencies]
-misarreach = "5.0.3"
+misarreach = "5.0.4"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 ```
@@ -154,9 +154,6 @@ Every public method, grouped the way the client groups them.
 | `lists()` | Lead lists in the workspace. |
 | `create_list()` | Create a lead list. |
 | `sync_list()` | Sync a lead list to its connected destination. |
-| `saved_searches()` | Saved search definitions. |
-| `create_saved_search()` | Save a search for reuse. |
-| `delete_saved_search()` | Delete a saved search. |
 | `scoring_rules()` | Lead-scoring rules for this workspace. |
 | `create_scoring_rule()` | Create a lead-scoring rule. |
 | `update_scoring_rule()` | Update a lead-scoring rule. |
@@ -569,4 +566,4 @@ blocked until a CAN-SPAM sender postal address is set via
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **Crates.io** — https://crates.io/crates/misarreach
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

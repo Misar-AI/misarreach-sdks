@@ -24,14 +24,14 @@ Maven:
 <dependency>
     <groupId>io.misar</groupId>
     <artifactId>misarreach-java</artifactId>
-    <version>5.0.3</version>
+    <version>5.0.4</version>
 </dependency>
 ```
 
 Gradle (Kotlin or Groovy DSL):
 
 ```kotlin
-implementation("io.misar:misarreach-java:5.0.3")
+implementation("io.misar:misarreach-java:5.0.4")
 ```
 
 Requires Java 17+. The only declared runtime dependency is
@@ -165,10 +165,10 @@ what you would guess:
 | read the Kanban board | `pipeline.get(params)` |
 | delete a deal/contact/campaign | `delete(id)` or `remove(id)` — same endpoint, `remove` URL-encodes the id |
 
-`client.leadFinder` hits eight endpoints `client.leads` already covers
+`client.leadFinder` hits seven endpoints `client.leads` already covers
 (`company`, `companyPeople`, `job`, `jobFeedback`, `syncList`,
-`removeSavedSearch`, `updateScoringRule`, `removeScoringRule`; the last two map
-to `deleteSavedSearch`/`deleteScoringRule` on `leads`). Prefer `client.leads` —
+`updateScoringRule`, `removeScoringRule`; the last one maps to
+`deleteScoringRule` on `leads`). Prefer `client.leads` —
 its `companyPeople` takes a query-parameter map, the `leadFinder` one does not.
 
 ---
@@ -205,9 +205,6 @@ Every public method, grouped the way the client groups them.
 | `lists()` | Lead lists in the workspace. |
 | `createList()` | Create a lead list. |
 | `syncList()` | Sync a lead list to its connected destination. |
-| `savedSearches()` | Saved search definitions. |
-| `createSavedSearch()` | Save a search for reuse. |
-| `deleteSavedSearch()` | Delete a saved search. |
 | `scoringRules()` | Lead-scoring rules for this workspace. |
 | `createScoringRule()` | Create a lead-scoring rule. |
 | `updateScoringRule()` | Update a lead-scoring rule. |
@@ -440,7 +437,6 @@ encoded.
 | `job()` | Poll a search job for status and the results so far. |
 | `jobFeedback()` | Rate a job's results so scoring improves. |
 | `syncList()` | Sync a lead list to its connected destination. |
-| `removeSavedSearch()` | Delete a saved search. |
 | `updateScoringRule()` | Update a lead-scoring rule. |
 | `removeScoringRule()` | Delete a lead-scoring rule. |
 
@@ -721,4 +717,4 @@ blocked until a CAN-SPAM sender postal address is set via
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **Maven Central** — https://central.sonatype.com/artifact/io.misar/misarreach-java
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

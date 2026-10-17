@@ -1,6 +1,6 @@
 {
   "name": "@misarreach/sdk",
-  "version": "5.0.3",
+  "version": "5.1.0",
   "description": "Typed client for MisarReach outreach & lead generation: a 23-source lead finder with SSE job streaming, contacts/deals/pipeline CRM, multi-channel campaigns, AI sales agent, autopilot and plan-usage reporting.",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "tsc && node --test \"dist/__tests__/**/*.test.js\""
+    "test": "tsc && node --test dist/__tests__/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -32,7 +32,7 @@
     "node": ">=18"
   },
   "license": "MIT",
-  "author": "Misar AI <hello@misar.io>",
+  "author": "Misar.AI <hello@misar.io>",
   "homepage": "https://www.misarreach.com",
   "repository": {
     "type": "git",

@@ -103,4 +103,4 @@ exponential backoff (configurable via `WithMaxRetries`).
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **pkg.go.dev** — https://pkg.go.dev/github.com/Misar-AI/misarreach-sdks/go/v5
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

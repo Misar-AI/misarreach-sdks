@@ -311,7 +311,7 @@ class MisarReachClient {
 // ---------------------------------------------------------------------------
 
 /// Lead Finder — discovery, enrichment, verification, scoring, lists,
-/// saved searches, scoring rules, recommendations, and the SSE job stream.
+/// search history, scoring rules, recommendations, and the SSE job stream.
 class LeadsResource extends _Resource {
   const LeadsResource(super.client);
 
@@ -363,14 +363,6 @@ class LeadsResource extends _Resource {
   Future<Map<String, dynamic>> syncList(String listId,
           [Map<String, dynamic>? data]) =>
       _client._request('POST', '/lead-finder/lists/$listId/sync', body: data);
-
-  // Saved searches
-  Future<Map<String, dynamic>> savedSearches({Map<String, dynamic>? params}) =>
-      _client._request('GET', '/lead-finder/saved-searches', queryParams: params);
-  Future<Map<String, dynamic>> createSavedSearch(Map<String, dynamic> data) =>
-      _client._request('POST', '/lead-finder/saved-searches', body: data);
-  Future<Map<String, dynamic>> deleteSavedSearch(String id) =>
-      _client._request('DELETE', '/lead-finder/saved-searches/$id');
 
   // Scoring rules
   Future<Map<String, dynamic>> scoringRules({Map<String, dynamic>? params}) =>

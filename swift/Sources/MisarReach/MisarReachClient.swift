@@ -377,21 +377,6 @@ public class LeadsResource {
         try await client.request(method: "POST", path: "/lead-finder/lists/\(listId)/sync", body: data)
     }
 
-    /// GET /lead-finder/saved-searches
-    public func savedSearches() async throws -> [String: Any] {
-        try await client.request(method: "GET", path: "/lead-finder/saved-searches")
-    }
-
-    /// POST /lead-finder/saved-searches
-    public func createSavedSearch(_ data: [String: Any]) async throws -> [String: Any] {
-        try await client.request(method: "POST", path: "/lead-finder/saved-searches", body: data)
-    }
-
-    /// DELETE /lead-finder/saved-searches/{id}
-    public func deleteSavedSearch(id: String) async throws -> [String: Any] {
-        try await client.request(method: "DELETE", path: "/lead-finder/saved-searches/\(id)")
-    }
-
     /// GET /lead-finder/scoring-rules
     public func scoringRules() async throws -> [String: Any] {
         try await client.request(method: "GET", path: "/lead-finder/scoring-rules")

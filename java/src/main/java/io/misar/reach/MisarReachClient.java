@@ -391,7 +391,7 @@ public final class MisarReachClient {
 
     // ── Resource: Lead Finder ──────────────────────────────────────────────────
 
-    /** Lead Finder — search, discover, enrich, verify, score, lists, saved searches, scoring rules, jobs. */
+    /** Lead Finder — search, discover, enrich, verify, score, lists, search history, scoring rules, jobs. */
     public final class LeadsResource {
         public Map<String, Object> account() throws MisarReachException { return req("GET", "/lead-finder/account", null); }
         public Map<String, Object> config() throws MisarReachException { return req("GET", "/lead-finder/config", null); }
@@ -429,10 +429,6 @@ public final class MisarReachClient {
         public Map<String, Object> lists() throws MisarReachException { return req("GET", "/lead-finder/lists", null); }
         public Map<String, Object> createList(Map<String, Object> data) throws MisarReachException { return req("POST", "/lead-finder/lists", data); }
         public Map<String, Object> syncList(String listId, Map<String, Object> data) throws MisarReachException { return req("POST", "/lead-finder/lists/" + listId + "/sync", data); }
-
-        public Map<String, Object> savedSearches() throws MisarReachException { return req("GET", "/lead-finder/saved-searches", null); }
-        public Map<String, Object> createSavedSearch(Map<String, Object> data) throws MisarReachException { return req("POST", "/lead-finder/saved-searches", data); }
-        public Map<String, Object> deleteSavedSearch(String id) throws MisarReachException { return req("DELETE", "/lead-finder/saved-searches/" + id, null); }
 
         public Map<String, Object> scoringRules() throws MisarReachException { return req("GET", "/lead-finder/scoring-rules", null); }
         public Map<String, Object> createScoringRule(Map<String, Object> data) throws MisarReachException { return req("POST", "/lead-finder/scoring-rules", data); }
@@ -687,11 +683,6 @@ public final class MisarReachClient {
         /** {@code POST /lead-finder/lists/:id/sync} */
         public Map<String, Object> syncList(String id, Map<String, Object> body) throws MisarReachException {
             return req("POST", "/lead-finder/lists/" + enc(id) + "/sync", body);
-        }
-
-        /** {@code DELETE /lead-finder/saved-searches/:id} */
-        public Map<String, Object> removeSavedSearch(String id) throws MisarReachException {
-            return req("DELETE", "/lead-finder/saved-searches/" + enc(id), null);
         }
 
         /** {@code PATCH /lead-finder/scoring-rules/:id} */

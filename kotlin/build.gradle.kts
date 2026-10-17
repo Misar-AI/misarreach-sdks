@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "io.misar"
-version = "5.0.3"
+version = "5.0.4"
 
 repositories {
     mavenCentral()
@@ -68,9 +68,9 @@ mavenPublishing {
         }
         developers {
             developer {
-                name.set("Misar AI")
+                name.set("Misar.AI")
                 email.set("hello@misar.io")
-                organization.set("Misar AI Technology Pvt Ltd")
+                organization.set("Misar.AI")
                 organizationUrl.set("https://misar.io")
             }
         }

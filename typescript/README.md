@@ -18,9 +18,14 @@ What the API covers, and what this package exposes:
 
 - **Lead finder** — `leads.search()` starts an async job across 23 sources and
   returns a `jobId`; poll it with `leads.jobStatus()` or watch it live over SSE.
-  Also company discovery, Hunter.io enrichment, email verification, on-demand AI
-  scoring, saved searches, scoring rules, lead lists, search history,
+  Also company discovery, enrichment, email verification, on-demand AI
+  scoring, scoring rules, lead lists, search history,
   recommendations, CSV/JSON export, and AI message preview.
+- **Company insights** — `leadFinder.revealCompanySite()` reads a company's own
+  website for the contacts it publishes, `leadFinder.companyBrief()` writes an
+  account brief (and an outreach message for a named person), and
+  `leadFinder.emailFormat()` returns the company's address format, learned only
+  from verified-deliverable addresses.
 - **Contacts** — CRUD, segments, stats, bulk unsubscribe/resubscribe/delete, and
   import of up to 5000 contacts. A contact may only be imported as `subscribed`
   *with* consent evidence; without it the server downgrades the status.
@@ -130,6 +135,22 @@ for await (const ev of reach.leadFinder.stream(jobId, { signal: controller.signa
 
 Pass an `AbortSignal` if you need to stop early — without one, a stuck job holds
 the connection open.
+
+### Company contacts, brief and email format
+
+```ts
+const site = await reach.leadFinder.revealCompanySite("acme.com");
+// site.emails, site.phone, site.profiles, site.technologies; site.charged tells you if a credit was used
+
+const { brief, message } = await reach.leadFinder.companyBrief("acme.com", { name: "Jane Doe", role: "VP Sales" });
+
+const format = await reach.leadFinder.emailFormat("acme.com"); // NotFoundError until enough verified addresses exist
+console.log(format.top.template, format.confidence); // "{first}.{last}@acme.com" "high"
+```
+
+A verification result of `accept_all` (from `leads.verifyEmails()`) means the
+domain accepts every address, so that address cannot be confirmed — do not
+treat it as valid.
 
 ### List saved leads
 
@@ -274,4 +295,4 @@ blocked until a CAN-SPAM sender postal address is set via
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **npm** — https://www.npmjs.com/package/@misarreach/sdk
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

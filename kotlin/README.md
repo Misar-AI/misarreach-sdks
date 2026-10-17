@@ -20,7 +20,7 @@ Gradle (Kotlin DSL):
 
 ```kotlin
 dependencies {
-    implementation("io.misar:misarreach-kotlin:5.0.3")
+    implementation("io.misar:misarreach-kotlin:5.0.4")
     // Declare coroutines yourself — see the note below.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:5.0.3")
 }
@@ -30,7 +30,7 @@ Gradle (Groovy DSL):
 
 ```groovy
 dependencies {
-    implementation 'io.misar:misarreach-kotlin:5.0.3'
+    implementation 'io.misar:misarreach-kotlin:5.0.4'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:5.0.3'
 }
 ```
@@ -42,7 +42,7 @@ Maven:
   <dependency>
     <groupId>io.misar</groupId>
     <artifactId>misarreach-kotlin</artifactId>
-    <version>5.0.3</version>
+    <version>5.0.4</version>
   </dependency>
   <dependency>
     <groupId>org.jetbrains.kotlinx</groupId>
@@ -197,9 +197,6 @@ Every public method, grouped the way the client groups them.
 | `lists()` | Lead lists in the workspace. |
 | `createList()` | Create a lead list. |
 | `syncList()` | Sync a lead list to its connected destination. |
-| `savedSearches()` | Saved search definitions. |
-| `createSavedSearch()` | Save a search for reuse. |
-| `deleteSavedSearch()` | Delete a saved search. |
 | `scoringRules()` | Lead-scoring rules for this workspace. |
 | `createScoringRule()` | Create a lead-scoring rule. |
 | `updateScoringRule()` | Update a lead-scoring rule. |
@@ -636,4 +633,4 @@ blocked until a CAN-SPAM sender postal address is set via
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **Maven Central** — https://central.sonatype.com/artifact/io.misar/misarreach-kotlin
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

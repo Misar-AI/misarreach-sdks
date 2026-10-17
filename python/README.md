@@ -19,8 +19,8 @@ Full reference: [`docs.misar.io/reach`](https://docs.misar.io/reach) · OpenAPI:
 
 - **Lead finder** — `leads.search()` starts an async job across 23 sources and
   returns a `jobId`; poll it with `leads.get_job()` or watch it live over SSE.
-  Also company discovery, Hunter.io enrichment, email verification, on-demand AI
-  scoring, saved searches, scoring rules, lead lists, search history,
+  Also company discovery, enrichment, email verification, on-demand AI
+  scoring, scoring rules, lead lists, search history,
   recommendations, export, and AI message preview.
 - **Contacts** — CRUD, segments, stats, bulk unsubscribe/resubscribe/delete, and
   import of up to 5000 contacts. A contact may only be imported as `subscribed`
@@ -72,7 +72,7 @@ Full reference: [`docs.misar.io/reach`](https://docs.misar.io/reach) · OpenAPI:
 ## Install
 
 ```bash
-pip install misar-reach==5.0.3
+pip install misar-reach==5.0.4
 ```
 
 Requires Python 3.9+. The distribution is named `misar-reach`; the import name
@@ -281,4 +281,4 @@ blocked until a CAN-SPAM sender postal address is set via
 - **Source** — https://github.com/Misar-AI/misarreach-sdks
 - **PyPI** — https://pypi.org/project/misar-reach/
 
-MIT © [Misar AI](https://misar.io)
+MIT © [Misar.AI](https://misar.io)

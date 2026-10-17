@@ -1,4 +1,4 @@
-import type { JsonObject } from "../types.js";
+import type { CompanyBriefParams, CompanyBriefResponse, CompanySiteReveal, EmailFormatSummary, JsonObject, SearchSuggestions } from "../types.js";
 import {
   MisarReachError,
   errorFromPayload,
@@ -7,7 +7,7 @@ import {
 type Requester = <T>(method: string, path: string, body?: unknown) => Promise<T>;
 
 /**
- * The lead-finder surface beyond `leads.*` — saved searches, scoring rules,
+ * The lead-finder surface beyond `leads.*` — search history, scoring rules,
  * company lookups, export, config and the SSE progress stream.
  */
 export class LeadFinderResource {
@@ -44,12 +44,39 @@ export class LeadFinderResource {
     return this.request("GET", `/lead-finder/export${q ? `?${q}` : ""}`);
   }
 
-  searchHistory(): Promise<JsonObject> {
-    return this.request("GET", "/lead-finder/search-history");
+  /**
+   * Past searches.
+   *
+   * Default shape: `{ hasSearched, history }` — the raw log.
+   * With `browse: true`: `{ entries, nextCursor }` — one entry per DISTINCT
+   * query, newest first, keyset-paginated. Pass the previous page's
+   * `nextCursor` as `before` to page backwards through time.
+   */
+  searchHistory(params?: {
+    browse?: boolean;
+    mode?: "people" | "companies";
+    limit?: number;
+    before?: string;
+  }): Promise<JsonObject> {
+    const qs = new URLSearchParams();
+    if (params?.browse) qs.set("browse", "1");
+    if (params?.mode) qs.set("mode", params.mode);
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params?.before) qs.set("before", params.before);
+    const q = qs.toString();
+    return this.request("GET", `/lead-finder/search-history${q ? `?${q}` : ""}`);
   }
 
   recommendations(): Promise<JsonObject> {
     return this.request("GET", "/lead-finder/recommendations");
+  }
+
+  /**
+   * Completions for a search box while the user types: at most six, `[]` for
+   * fewer than 3 characters or when none are available. Free; limited per user.
+   */
+  suggest(q: string): Promise<SearchSuggestions> {
+    return this.request("GET", `/lead-finder/suggest?q=${encodeURIComponent(q)}`);
   }
 
   company(domain: string): Promise<JsonObject> {
@@ -60,21 +87,36 @@ export class LeadFinderResource {
     return this.request("GET", `/lead-finder/companies/${encodeURIComponent(domain)}/people`);
   }
 
+  /**
+   * Read the company's own website now: the contact emails, phone number and
+   * social profiles it publishes, and its detected tech stack. One enrichment
+   * credit, charged only when the site publishes a way to reach the company,
+   * and at most once per domain per day.
+   */
+  revealCompanySite(domain: string): Promise<CompanySiteReveal> {
+    return this.request("GET", `/lead-finder/companies/${encodeURIComponent(domain)}/site`);
+  }
+
+  /**
+   * An account brief written from the company's homepage (core offer,
+   * audience, a likely priority, an opening line) and, when `person.name` is
+   * given, an outreach message for that person that uses it.
+   */
+  companyBrief(domain: string, person: CompanyBriefParams = {}): Promise<CompanyBriefResponse> {
+    return this.request("POST", `/lead-finder/companies/${encodeURIComponent(domain)}/brief`, person);
+  }
+
+  /**
+   * The company's email address format, learned only from verified-deliverable
+   * addresses. Free. Raises `NotFoundError` when there is not yet enough
+   * verified evidence to publish one for the domain.
+   */
+  emailFormat(domain: string): Promise<EmailFormatSummary> {
+    return this.request("GET", `/public/email-formats/${encodeURIComponent(domain)}`);
+  }
+
   addToSegment(params: { leadIds: string[]; segmentId?: string; segmentName?: string }): Promise<JsonObject> {
     return this.request("POST", "/lead-finder/add-to-segment", params);
-  }
-
-  // ── saved searches ─────────────────────────────────────────────────────────
-  savedSearches(): Promise<JsonObject> {
-    return this.request("GET", "/lead-finder/saved-searches");
-  }
-
-  createSavedSearch(params: JsonObject): Promise<JsonObject> {
-    return this.request("POST", "/lead-finder/saved-searches", params);
-  }
-
-  deleteSavedSearch(id: string): Promise<{ ok: boolean }> {
-    return this.request("DELETE", `/lead-finder/saved-searches/${encodeURIComponent(id)}`);
   }
 
   // ── scoring rules ──────────────────────────────────────────────────────────
