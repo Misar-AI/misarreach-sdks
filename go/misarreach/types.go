@@ -75,6 +75,10 @@ type SearchLeadsRequest struct {
 	UseAI              bool                   `json:"useAI,omitempty"`
 	Filters            map[string]interface{} `json:"filters,omitempty"`
 	DisablePaidSources bool                   `json:"disablePaidSources,omitempty"`
+	// Mode is "internal" (Misar's own data only — fast, no credits) or "live"
+	// (external sources too; spends credits per delivered lead). Empty keeps the
+	// server's configured default.
+	Mode string `json:"mode,omitempty"`
 }
 
 // DiscoverCompaniesRequest — POST /lead-finder/discover.
